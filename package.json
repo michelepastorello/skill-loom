@@ -1,0 +1,38 @@
+{
+  "name": "skill-loom",
+  "version": "0.1.0",
+  "description": "One canonical, git-versioned vault of agent skills, symlinked into every runtime (Claude Code, Codex, custom).",
+  "type": "module",
+  "bin": {
+    "skill-loom": "dist/src/cli.js"
+  },
+  "files": [
+    "dist/src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc && cp src/ui.html dist/src/ui.html",
+    "test": "npm run build && node --test 'dist/test/**/*.test.js'",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "agent-skills",
+    "claude-code",
+    "codex",
+    "symlink",
+    "single-source-of-truth"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michelepastorello/skill-loom.git"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3"
+  }
+}
