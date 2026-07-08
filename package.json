@@ -23,8 +23,15 @@
     "agent-skills",
     "claude-code",
     "codex",
+    "claude",
+    "ai-agents",
+    "agent-tooling",
+    "skills",
+    "prompt-management",
+    "vault",
     "symlink",
-    "single-source-of-truth"
+    "single-source-of-truth",
+    "cli"
   ],
   "license": "MIT",
   "repository": {
