@@ -2075,7 +2075,8 @@
       .meta .commit.sel {
         background: var(--accent-soft);
       }
-    </style>
+    .hexsw{display:inline-block;width:0.72em;height:0.72em;border-radius:3px;margin-right:0.34em;vertical-align:-0.09em;box-shadow:inset 0 0 0 1px rgba(128,128,128,.4)}
+</style>
   </head>
   <body>
     <header>
@@ -3582,6 +3583,13 @@
         }
       }
 
+      // VSCode-style colour chip: prepend a swatch to any #hex inside inline code.
+      function hexSw(s) {
+        return s.replace(
+          /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})\b/g,
+          (h) => `<span class="hexsw" style="background:${h}"></span>${h}`,
+        );
+      }
       function renderMd(src, showFm = true) {
         let text = src,
           fm = "";
@@ -3592,7 +3600,7 @@
         }
         const inline = (s) =>
           s
-            .replace(/`([^`]+)`/g, "<code>$1</code>")
+            .replace(/`([^`]+)`/g, (m, c) => "<code>" + hexSw(c) + "</code>")
             .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
             .replace(/\*([^*]+)\*/g, "<em>$1</em>")
             .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (all, t, u) =>
