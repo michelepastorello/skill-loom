@@ -722,6 +722,10 @@
         padding: 30px 52px 60px;
         overflow-y: auto;
         min-width: 0;
+        /* One shared content measure so prose, code blocks, tables and dividers
+           all share the same right edge. Fills the document column (no dead
+           space); tune this single value to cap the reading width if desired. */
+        --measure: 100%;
       }
       /* Refined scrollbars, consistent across every scroll surface (window +
          detail columns + status panes): subtle at rest (never disappears when
@@ -931,7 +935,7 @@
         font-size: 16.5px;
         line-height: 1.6;
         margin: 0 0 8px;
-        max-width: 74ch;
+        max-width: var(--measure);
       }
       .md h2 {
         font-size: 17px;
@@ -948,7 +952,7 @@
         font-size: 15px;
         line-height: 1.64;
         margin: 0.5em 0;
-        max-width: 74ch;
+        max-width: var(--measure);
       }
       .md strong {
         font-weight: 650;
@@ -958,7 +962,7 @@
       }
       .md code {
         font-family: var(--mono);
-        font-size: 0.84em;
+        font-size: 0.95em;
         background: var(--panel);
         padding: 1px 6px;
         border-radius: 5px;
@@ -972,7 +976,7 @@
         overflow-x: auto;
         line-height: 1.7;
         color: var(--dim);
-        max-width: 900px;
+        max-width: var(--measure);
       }
       .md pre code {
         background: none;
@@ -981,7 +985,7 @@
       .md table {
         border-collapse: collapse;
         width: 100%;
-        max-width: 980px;
+        max-width: var(--measure);
         margin: 1.1em 0;
         font-size: 13.5px;
       }
@@ -1002,14 +1006,61 @@
       .md td code {
         font-size: 11.5px;
       }
-      .md ul {
+      .md ul,
+      .md ol {
         padding-left: 20px;
-        margin: 0.5em 0;
-        max-width: 74ch;
+        margin: 0.9em 0;
+        max-width: var(--measure);
       }
       .md li {
         font-size: 14.5px;
-        margin: 0.35em 0;
+        line-height: 1.62;
+        margin: 0.5em 0;
+      }
+      /* Blockquotes align to the same indent as lists (no side-stripe border),
+         set apart by muted colour only. */
+      .md blockquote {
+        margin: 0.6em 0;
+        padding-left: 20px;
+        max-width: var(--measure);
+        color: var(--dim);
+      }
+      /* Divider: matches the shared measure, with generous vertical breathing room */
+      .md hr {
+        max-width: var(--measure);
+        margin: 2em 0;
+        border: 0;
+        border-top: 1px solid var(--line);
+      }
+      /* Task-list items: real checkbox in the list gutter instead of literal [ ] */
+      .md li.task {
+        list-style: none;
+        position: relative;
+      }
+      .md li.task::before {
+        content: "";
+        position: absolute;
+        left: -20px;
+        top: 0.3em;
+        width: 12px;
+        height: 12px;
+        border: 1.5px solid var(--line);
+        border-radius: 3.5px;
+      }
+      .md li.task.done::before {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+      .md li.task.done::after {
+        content: "";
+        position: absolute;
+        left: -15px;
+        top: 0.42em;
+        width: 4px;
+        height: 7px;
+        border: solid var(--accent);
+        border-width: 0 1.5px 1.5px 0;
+        transform: rotate(45deg);
       }
 
       /* ── health ─────────────────────────────────────────────────────────── */
@@ -1578,6 +1629,18 @@
         overflow-y: auto;
         padding: 24px 40px 60px;
         min-width: 0;
+      }
+      /* Skill-detail document: centre it as one readable column (title, viewerbar
+         and body together) with balanced margins that grow with the pane, capped
+         at ~56rem so lines stay readable on wide monitors. */
+      .doc.review {
+        padding: 24px max(40px, calc(50% - 28rem)) 60px;
+      }
+      /* Body fills the centred column and aligns with the header (drop the
+         article's own side inset). */
+      #viewer .md {
+        padding-left: 0;
+        padding-right: 0;
       }
       .rvhead {
         display: flex;
@@ -3782,7 +3845,13 @@
               html += `<${want}>`;
               inList = want;
             }
-            html += `<li>${inline((ul ?? ol)[1])}</li>`;
+            const item = (ul ?? ol)[1];
+            const task = ul && /^\[([ xX])\]\s+(.*)$/.exec(item);
+            if (task) {
+              html += `<li class="task${task[1].toLowerCase() === "x" ? " done" : ""}">${inline(task[2])}</li>`;
+            } else {
+              html += `<li>${inline(item)}</li>`;
+            }
             continue;
           }
           if (/^\s*&gt;\s?/.test(line)) {
