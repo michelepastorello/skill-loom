@@ -1,6 +1,6 @@
 {
   "name": "skill-loom",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "One canonical, git-versioned vault of agent skills, symlinked into every runtime (Claude Code, Codex, custom).",
   "type": "module",
   "bin": {
