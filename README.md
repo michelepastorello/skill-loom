@@ -16,7 +16,6 @@
 
 Agent skills multiply: Claude Code reads `~/.claude/skills`, Codex reads `~/.agents/skills`, your own agents read somewhere else. Copies drift. skill-loom keeps **one vault** — a plain, git-versioned folder you own — and projects it into every runtime with symlinks. Edit once, every agent sees the same skill.
 
-
 Runs headless from the CLI, or open the built-in dashboard with `skill-loom ui`.
 
 ## Quickstart
