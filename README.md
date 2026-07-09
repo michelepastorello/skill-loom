@@ -10,9 +10,12 @@
 
 </div>
 
+<p align="center">
+  <img src="docs/demo.gif" alt="skill-loom — one vault of agent skills, symlinked into Claude Code, Codex and custom runtimes" width="720">
+</p>
+
 Agent skills multiply: Claude Code reads `~/.claude/skills`, Codex reads `~/.agents/skills`, your own agents read somewhere else. Copies drift. skill-loom keeps **one vault** — a plain, git-versioned folder you own — and projects it into every runtime with symlinks. Edit once, every agent sees the same skill.
 
-![skill-loom dashboard — your skill library, grouped and colour-coded by category](docs/dashboard-library.png)
 
 Runs headless from the CLI, or open the built-in dashboard with `skill-loom ui`.
 
@@ -74,6 +77,8 @@ Any consumer is just a name and a path — add your own runtimes freely.
 
 Prefer buttons over flags? `skill-loom ui` starts a local dashboard — a single
 self-contained page, no external dependencies, nothing leaves your machine.
+
+![skill-loom dashboard — your skill library, grouped and colour-coded by category](docs/dashboard-library.png)
 
 - **My skills** — your library as cards, grouped and colour-coded by category,
   each with a NotePlan-style icon (set `icon:` / `icon-color:` in frontmatter).
