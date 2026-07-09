@@ -2,3 +2,6 @@ node_modules/
 dist/
 .superpowers/
 *.tgz
+
+# Generated demo vault (regenerate with: node demo/scaffold-demo.mjs)
+demo/demo-vault/
