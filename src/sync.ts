@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
 import type { OpOutcome } from "./ops.js";
 
@@ -14,9 +15,36 @@ function git(vaultDir: string, ...args: string[]) {
   return spawnSync("git", ["-C", vaultDir, ...args], { encoding: "utf8" });
 }
 
+/**
+ * Where the vault sits relative to git. `isRoot` is true only when vaultDir is
+ * the top level of its own repo — not merely nested inside a larger one. Every
+ * git-mutating path guards on this so we never operate on a parent repo (e.g.
+ * the home dir), which would list and commit unrelated files.
+ */
+export function vaultRepo(vaultDir: string): {
+  inside: boolean;
+  isRoot: boolean;
+  root: string | null;
+} {
+  const top = git(vaultDir, "rev-parse", "--show-toplevel");
+  if (top.error || top.status !== 0) {
+    return { inside: false, isRoot: false, root: null };
+  }
+  const root = top.stdout.trim();
+  let isRoot = false;
+  try {
+    isRoot = realpathSync(root) === realpathSync(vaultDir);
+  } catch {
+    isRoot = false;
+  }
+  return { inside: true, isRoot, root };
+}
+
 export function syncStatus(vaultDir: string, fetchFirst = false): SyncStatus {
-  const inside = git(vaultDir, "rev-parse", "--is-inside-work-tree");
-  if (inside.error || inside.status !== 0) {
+  // Only treat the vault as versioned when it is the ROOT of its own repo.
+  // If it merely sits inside a larger repo (e.g. the home dir), git would
+  // report that repo's whole status — never surface that as the vault's.
+  if (!vaultRepo(vaultDir).isRoot) {
     return { versioned: false, remote: null, dirty: 0, ahead: 0, behind: 0 };
   }
   const remoteOut = git(vaultDir, "remote", "get-url", "origin");
@@ -45,6 +73,14 @@ export function syncStatus(vaultDir: string, fetchFirst = false): SyncStatus {
 }
 
 export function syncOp(vaultDir: string, apply: boolean): OpOutcome {
+  const repo = vaultRepo(vaultDir);
+  if (repo.inside && !repo.isRoot) {
+    return {
+      status: 2,
+      message: `the vault is inside a larger git repo (${repo.root}) — a skill-loom vault must be its own repo; run "git init" in the vault first`,
+      actions: [],
+    };
+  }
   const st = syncStatus(vaultDir, true);
   if (!st.versioned) {
     return {

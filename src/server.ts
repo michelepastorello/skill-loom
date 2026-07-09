@@ -30,7 +30,7 @@ import {
   restoreOp,
   type OpOutcome,
 } from "./ops.js";
-import { syncOp, syncStatus, setRemote } from "./sync.js";
+import { syncOp, syncStatus, setRemote, vaultRepo } from "./sync.js";
 import { UsageError } from "./errors.js";
 
 // Title-case a skill slug, keeping common tech acronyms and proper nouns cased.
@@ -124,6 +124,10 @@ export function buildState(vaultDir: string): object {
 export function gitDiff(
   vaultDir: string,
 ): { versioned: false } | { versioned: true; status: string; diff: string } {
+  // Guard: only report changes when the vault is its own repo root. Otherwise a
+  // vault nested in a larger repo (e.g. the home dir) would list every unrelated
+  // file as an "unsaved change".
+  if (!vaultRepo(vaultDir).isRoot) return { versioned: false };
   const status = spawnSync("git", ["-C", vaultDir, "status", "--porcelain"], {
     encoding: "utf8",
   });
