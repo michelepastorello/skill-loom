@@ -2239,6 +2239,20 @@
         ><button id="confirm-yes" class="btn primary">Confirm</button>
       </div>
     </dialog>
+    <dialog id="prompt">
+      <h2 id="prompt-title"></h2>
+      <input
+        id="prompt-input"
+        class="txt"
+        type="text"
+        spellcheck="false"
+        autocomplete="off"
+      />
+      <div class="dialog-actions">
+        <button id="prompt-no" class="btn">Cancel</button
+        ><button id="prompt-yes" class="btn primary">OK</button>
+      </div>
+    </dialog>
     <div id="toast"></div>
     <script>
       const $ = (s) => document.querySelector(s);
@@ -2310,6 +2324,43 @@
           yes.addEventListener("click", oy);
           no.addEventListener("click", on);
           dlg.showModal();
+        });
+      }
+      // In-app replacement for window.prompt(): resolves to the entered string
+      // (possibly ""), or null on Cancel / Esc / backdrop — same contract as prompt().
+      function promptDialog(title, value = "", okLabel = "OK") {
+        return new Promise((resolve) => {
+          const dlg = $("#prompt"),
+            input = $("#prompt-input"),
+            yes = $("#prompt-yes"),
+            no = $("#prompt-no");
+          $("#prompt-title").textContent = title;
+          input.value = value ?? "";
+          yes.textContent = okLabel;
+          const done = (v) => {
+            yes.removeEventListener("click", oy);
+            no.removeEventListener("click", on);
+            dlg.removeEventListener("close", oc);
+            input.removeEventListener("keydown", onKey);
+            dlg.close();
+            resolve(v);
+          };
+          const oy = () => done(input.value);
+          const on = () => done(null);
+          const oc = () => done(null);
+          const onKey = (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              done(input.value);
+            }
+          };
+          yes.addEventListener("click", oy);
+          no.addEventListener("click", on);
+          dlg.addEventListener("close", oc);
+          input.addEventListener("keydown", onKey);
+          dlg.showModal();
+          input.focus();
+          input.select();
         });
       }
       function fmtWhen(iso) {
@@ -3343,7 +3394,11 @@
 
       /* ---------- lifecycle actions ---------- */
       async function doArchive(name) {
-        const reason = prompt(`Archive "${name}" — reason?`, "");
+        const reason = await promptDialog(
+          `Archive "${name}" — reason?`,
+          "",
+          "Archive",
+        );
         if (reason === null) return;
         const dry = await api("/api/archive", { name, reason, apply: false });
         if (!dry.ok) return toast(dry.data.message || dry.data.error);
@@ -3355,7 +3410,7 @@
         go("skills");
       }
       async function doRename(name) {
-        const next = prompt(`Rename "${name}" to:`, name);
+        const next = await promptDialog(`Rename "${name}" to:`, name, "Rename");
         if (!next || next === name) return;
         const dry = await api("/api/migrate", {
           old: name,
@@ -4059,9 +4114,10 @@
         go("skills");
       }
       async function doRemote() {
-        const url = prompt(
+        const url = await promptDialog(
           "Git remote URL (origin):",
           (sync && sync.remote) || "",
+          "Save",
         );
         if (!url) return;
         const wet = await api("/api/remote", { url, apply: true });
