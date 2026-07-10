@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { syncStatus, syncOp, setRemote } from "../src/sync.js";
+import { syncStatus, syncOp, syncFiles, setRemote } from "../src/sync.js";
 import { makeTmp, makeSkill, makeConfig } from "./helpers.js";
 
 function git(dir: string, ...args: string[]) {
@@ -156,4 +156,28 @@ test("setRemote sets origin on a versioned vault; rejects empty/non-git", () => 
   );
   assert.equal(setRemote(vault, "", true).status, 2);
   assert.equal(setRemote(makeTmp(), "x", true).status, 2);
+});
+
+test("syncFiles maps dirty, outgoing and incoming paths", () => {
+  const { a, b } = twoClones();
+  // outgoing: commit a change in A without pushing
+  writeFileSync(
+    path.join(a, "cat/alpha/SKILL.md"),
+    "---\nname: alpha\n---\n\n# v2\n",
+  );
+  git(a, "add", "-A");
+  git(a, "commit", "-q", "-m", "edit alpha", "--no-verify");
+  // dirty: an uncommitted file in A
+  writeFileSync(path.join(a, "cat/alpha/notes.md"), "wip\n");
+  const fa = syncFiles(a);
+  assert.ok(fa.dirty.includes("cat/alpha/notes.md"));
+  assert.ok(fa.outgoing.includes("cat/alpha/SKILL.md"));
+  // incoming: B pushes, A fetches
+  writeFileSync(path.join(b, "beta.md"), "hello\n");
+  git(b, "add", "-A");
+  git(b, "commit", "-q", "-m", "add beta", "--no-verify");
+  git(b, "push", "-q", "origin", "main");
+  git(a, "fetch", "-q", "origin");
+  const fa2 = syncFiles(a);
+  assert.ok(fa2.incoming.includes("beta.md"));
 });

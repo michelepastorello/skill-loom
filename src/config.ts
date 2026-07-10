@@ -14,6 +14,9 @@ export interface LoomConfig {
   consumers: Record<string, string>;
   ignore: string[];
   archived: ArchivedEntry[];
+  /** Custom word casing for humanized names/labels: kebab word → cased form
+   *  (e.g. { "forpros": "ForPros" }). Merged over the built-in dictionaries. */
+  names: Record<string, string>;
 }
 
 export const CONFIG_NAME = "loom.json";
@@ -44,12 +47,24 @@ export function loadConfig(vaultDir: string): LoomConfig {
     consumers: raw.consumers ?? {},
     ignore: raw.ignore ?? [...DEFAULT_IGNORE],
     archived: raw.archived ?? [],
+    names: raw.names ?? {},
   };
 }
 
 export function saveConfig(vaultDir: string, cfg: LoomConfig): void {
+  // Canonical form: the consumers and names maps are written sorted by key,
+  // so additions land in their alphabetical spot and git diffs stay stable.
+  const sorted = (o: Record<string, string>) =>
+    Object.fromEntries(
+      Object.entries(o).sort(([a], [b]) => a.localeCompare(b)),
+    );
+  const out = {
+    ...cfg,
+    consumers: sorted(cfg.consumers),
+    names: sorted(cfg.names),
+  };
   writeFileSync(
     path.join(vaultDir, CONFIG_NAME),
-    JSON.stringify(cfg, null, 2) + "\n",
+    JSON.stringify(out, null, 2) + "\n",
   );
 }

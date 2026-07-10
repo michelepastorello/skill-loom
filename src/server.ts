@@ -4,11 +4,17 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
-import { readFileSync, realpathSync, statSync, readdirSync } from "node:fs";
+import {
+  readFileSync,
+  realpathSync,
+  statSync,
+  readdirSync,
+  existsSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./config.js";
+import { loadConfig, saveConfig, expandTilde } from "./config.js";
 import {
   scanVault,
   validateVault,
@@ -30,7 +36,8 @@ import {
   restoreOp,
   type OpOutcome,
 } from "./ops.js";
-import { syncOp, syncStatus, setRemote, vaultRepo } from "./sync.js";
+import { syncOp, syncStatus, syncFiles, setRemote, vaultRepo } from "./sync.js";
+import { PRESETS } from "./commands/init.js";
 import { UsageError } from "./errors.js";
 
 // Title-case a skill slug, keeping common tech acronyms and proper nouns cased.
@@ -41,10 +48,12 @@ const ACRONYMS = new Set([
   "sql", "db", "orm", "ci", "cd", "os", "ip", "dns", "ssh", "tls", "ssl",
   "jwt", "oauth", "uuid", "id", "qa", "mcp", "cdn", "crud", "dto", "seo",
   "aws", "gcp", "cpu", "gpu", "ram", "io", "faq", "vps", "3d", "2d",
+  "gpt", "tts", "crm", "ynab", "nas", "pptx", "en", "it",
 ]);
 const PROPER: Record<string, string> = {
   linkedin: "LinkedIn",
   openai: "OpenAI",
+  openclaw: "OpenClaw",
   github: "GitHub",
   posthog: "PostHog",
   heygen: "HeyGen",
@@ -67,17 +76,33 @@ const MINOR = new Set([
   "at",
 ]);
 
-export function humanizeName(name: string): string {
+export function humanizeName(
+  name: string,
+  names: Record<string, string> = {},
+): string {
   return name
     .split("-")
     .map((w, i) => {
       const lw = w.toLowerCase();
+      if (names[lw] !== undefined) return names[lw];
       if (PROPER[lw]) return PROPER[lw];
       if (ACRONYMS.has(lw)) return lw.toUpperCase();
       if (i > 0 && MINOR.has(lw)) return lw;
       return w.charAt(0).toUpperCase() + w.slice(1);
     })
     .join(" ");
+}
+
+// Word-casing map for the client (rail labels, chips): built-ins merged with
+// the vault's custom `names` from loom.json, which always wins.
+export function clientNames(
+  custom: Record<string, string>,
+): Record<string, string> {
+  return {
+    ...Object.fromEntries([...ACRONYMS].map((a) => [a, a.toUpperCase()])),
+    ...PROPER,
+    ...custom,
+  };
 }
 
 export function aggregateHealth(
@@ -93,10 +118,33 @@ export function buildState(vaultDir: string): object {
   const cfg = loadConfig(vaultDir);
   const skills = scanVault(vaultDir, cfg);
   const matrix = statusMatrix(skills, cfg);
+  // Per-skill git state: does anything under the skill's folder still need
+  // a commit, a push, or a pull? Priority: dirty > ahead > behind > clean.
+  const sf = syncFiles(vaultDir);
+  const syncOf = (rel: string): "dirty" | "ahead" | "behind" | "clean" => {
+    const hit = (arr: string[]) =>
+      arr.some((f) => f === rel || f.startsWith(rel + "/"));
+    if (hit(sf.dirty)) return "dirty";
+    if (hit(sf.outgoing)) return "ahead";
+    if (hit(sf.incoming)) return "behind";
+    return "clean";
+  };
   return {
     vaultDir,
     consumers: cfg.consumers,
     archived: cfg.archived,
+    names: clientNames(cfg.names),
+    customNames: cfg.names,
+    // Known runtimes detected on this machine but not configured yet — the
+    // Settings page offers them as one-click additions.
+    presets: Object.entries(PRESETS)
+      .filter(
+        ([n, p]) =>
+          !cfg.consumers[n] &&
+          !Object.values(cfg.consumers).includes(p) &&
+          existsSync(path.dirname(expandTilde(p))),
+      )
+      .map(([name, p]) => ({ name, path: p })),
     skills: skills.map((s) => {
       const md = path.join(s.dir, "SKILL.md");
       const st = statSync(md, { throwIfNoEntry: false });
@@ -105,12 +153,16 @@ export function buildState(vaultDir: string): object {
         .map((m) => m.state);
       return {
         name: s.name,
-        title: humanizeName(s.name),
+        title: humanizeName(s.name, cfg.names),
         health: aggregateHealth(states),
         dir: s.dir,
         rel: path.relative(vaultDir, s.dir),
         icon: parseFrontmatterField(md, "icon") ?? null,
         iconColor: parseFrontmatterField(md, "icon-color") ?? null,
+        domain: parseFrontmatterField(md, "domain"),
+        layer: parseFrontmatterField(md, "layer"),
+        status: parseFrontmatterField(md, "status") ?? "active",
+        sync: syncOf(path.relative(vaultDir, s.dir)),
         description: parseFrontmatterField(md, "description") ?? "",
         modified: st ? st.mtime.toISOString().slice(0, 10) : "",
       };
@@ -438,7 +490,13 @@ export function createUiServer(vaultDir: string): Server {
         return sendJson(res, 200, { diff: out.stdout });
       }
       if (route === "GET /api/sync")
-        return sendJson(res, 200, syncStatus(vaultDir));
+        // ?fetch=1 refreshes origin first, so "behind" reflects the live
+        // remote (used by the on-open check), not the last fetch.
+        return sendJson(
+          res,
+          200,
+          syncStatus(vaultDir, url.searchParams.get("fetch") === "1"),
+        );
       if (route === "POST /api/sync") {
         const body = await readBody(req);
         const apply = body.apply === true;
@@ -477,6 +535,46 @@ export function createUiServer(vaultDir: string): Server {
         const body = await readBody(req);
         const apply = body.apply === true;
         return sendOp(res, setRemote(vaultDir, str(body.url), apply), apply);
+      }
+      if (route === "POST /api/consumers") {
+        // Add a runtime: name -> skills dir, written to loom.json. Linking
+        // into it stays a separate, dry-run-gated step (link --apply / UI).
+        const body = await readBody(req);
+        const name = str(body.name)?.toLowerCase().trim();
+        const target = str(body.path)?.trim();
+        if (!name || !/^[a-z0-9][a-z0-9-]{0,32}$/.test(name))
+          return sendJson(res, 400, {
+            error: "name must be a short lowercase-kebab identifier",
+          });
+        if (!target) return sendJson(res, 400, { error: "path is required" });
+        const cfg = loadConfig(vaultDir);
+        if (cfg.consumers[name])
+          return sendJson(res, 400, {
+            error: `runtime "${name}" already exists`,
+          });
+        cfg.consumers[name] = target;
+        saveConfig(vaultDir, cfg);
+        return sendJson(res, 200, { ok: true, consumers: cfg.consumers });
+      }
+      if (route === "POST /api/names") {
+        // Edit the vault's custom word-casing map (loom.json `names`).
+        // { word, cased } adds/updates; { word, remove: true } deletes.
+        const body = await readBody(req);
+        const word = str(body.word)?.toLowerCase().trim();
+        if (!word || /\s|-/.test(word))
+          return sendJson(res, 400, {
+            error: "word must be a single kebab segment (no spaces or dashes)",
+          });
+        const cfg = loadConfig(vaultDir);
+        if (body.remove === true) {
+          delete cfg.names[word];
+        } else {
+          const cased = str(body.cased)?.trim();
+          if (!cased) return sendJson(res, 400, { error: "cased is required" });
+          cfg.names[word] = cased;
+        }
+        saveConfig(vaultDir, cfg);
+        return sendJson(res, 200, { ok: true, names: cfg.names });
       }
       sendJson(res, 404, { error: "not found" });
     } catch (err) {

@@ -31,6 +31,7 @@ export function makeConfig(
     consumers,
     ignore: [...DEFAULT_IGNORE],
     archived: [],
+    names: {},
   };
   saveConfig(vaultDir, cfg);
   return cfg;

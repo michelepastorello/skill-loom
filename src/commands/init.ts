@@ -10,9 +10,22 @@ import {
 } from "../config.js";
 import { ARCHIVE_DIR } from "../vault.js";
 
+// Known global skills directories, one per coding agent, as documented by
+// the open agent-skills ecosystem (vercel-labs/skills). "agents" is the
+// shared pool several agents read (Cline, Warp, Zed, ...). init adds the
+// ones whose parent directory exists on this machine; the dashboard offers
+// the rest as one-click suggestions.
 export const PRESETS: Record<string, string> = {
+  agents: "~/.agents/skills",
   claude: "~/.claude/skills",
-  codex: "~/.agents/skills",
+  codex: "~/.codex/skills",
+  cursor: "~/.cursor/skills",
+  opencode: "~/.config/opencode/skills",
+  gemini: "~/.gemini/skills",
+  amp: "~/.config/agents/skills",
+  windsurf: "~/.codeium/windsurf/skills",
+  goose: "~/.config/goose/skills",
+  vibe: "~/.vibe/skills",
 };
 
 export function runInit(vaultDir: string): number {
@@ -29,6 +42,7 @@ export function runInit(vaultDir: string): number {
     consumers,
     ignore: [...DEFAULT_IGNORE],
     archived: [],
+    names: {},
   };
   saveConfig(vaultDir, cfg);
   mkdirSync(path.join(vaultDir, ARCHIVE_DIR), { recursive: true });

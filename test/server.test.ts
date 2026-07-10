@@ -52,6 +52,34 @@ test("GET /api/state returns skills, matrix and problems", async () => {
   server.close();
 });
 
+test("state skills carry domain, layer and status (status defaults to active)", async () => {
+  const { vault } = uiVault();
+  const dir = makeSkill(vault, "cat", "alpha");
+  writeFileSync2(
+    path.join(dir, "SKILL.md"),
+    "---\nname: alpha\ndomain: bottega19\nlayer: tool\nstatus: rebrand-needed\ndescription: x\n---\n\n# alpha\n",
+  );
+  makeSkill(vault, "cat", "beta"); // no taxonomy fields
+  const { server, base } = await start(vault);
+  const body = (await (await fetch(`${base}/api/state`)).json()) as {
+    skills: {
+      name: string;
+      domain: string | null;
+      layer: string | null;
+      status: string;
+    }[];
+  };
+  const a = body.skills.find((s) => s.name === "alpha");
+  const b = body.skills.find((s) => s.name === "beta");
+  assert.equal(a?.domain, "bottega19");
+  assert.equal(a?.layer, "tool");
+  assert.equal(a?.status, "rebrand-needed");
+  assert.equal(b?.domain, null);
+  assert.equal(b?.layer, null);
+  assert.equal(b?.status, "active");
+  server.close();
+});
+
 test("POST /api/link dry-run plans without touching fs; apply creates symlinks", async () => {
   const { vault, consumerDir } = uiVault();
   makeSkill(vault, "cat", "alpha");
@@ -346,6 +374,16 @@ test("humanizeName and aggregateHealth follow the spec mapping", () => {
   assert.equal(humanizeName("svg-logo-designer"), "SVG Logo Designer");
   assert.equal(humanizeName("research-to-narrative"), "Research to Narrative");
   assert.equal(humanizeName("linkedin-analytics"), "LinkedIn Analytics");
+  assert.equal(humanizeName("openclaw-checkpoint"), "OpenClaw Checkpoint");
+  assert.equal(humanizeName("bottega19-crm"), "Bottega19 CRM");
+  assert.equal(humanizeName("openai-tts"), "OpenAI TTS");
+  assert.equal(humanizeName("gpt-image-2"), "GPT Image 2");
+  assert.equal(humanizeName("ynab"), "YNAB");
+  // custom names from loom.json win over the built-in dictionaries
+  assert.equal(
+    humanizeName("forpros-shop", { forpros: "ForPros" }),
+    "ForPros Shop",
+  );
   assert.equal(aggregateHealth(["linked", "linked"]), "active");
   assert.equal(aggregateHealth(["linked", "foreign"]), "attention");
   assert.equal(aggregateHealth(["linked", "missing"]), "attention");

@@ -9,6 +9,10 @@ export interface SyncStatus {
   dirty: number;
   ahead: number;
   behind: number;
+  /** Subjects of remote commits not yet pulled (newest first, capped). */
+  incoming: string[];
+  /** Subjects of local commits not yet pushed (newest first, capped). */
+  outgoing: string[];
 }
 
 function git(vaultDir: string, ...args: string[]) {
@@ -45,7 +49,15 @@ export function syncStatus(vaultDir: string, fetchFirst = false): SyncStatus {
   // If it merely sits inside a larger repo (e.g. the home dir), git would
   // report that repo's whole status — never surface that as the vault's.
   if (!vaultRepo(vaultDir).isRoot) {
-    return { versioned: false, remote: null, dirty: 0, ahead: 0, behind: 0 };
+    return {
+      versioned: false,
+      remote: null,
+      dirty: 0,
+      ahead: 0,
+      behind: 0,
+      incoming: [],
+      outgoing: [],
+    };
   }
   const remoteOut = git(vaultDir, "remote", "get-url", "origin");
   const remote = remoteOut.status === 0 ? remoteOut.stdout.trim() : null;
@@ -54,6 +66,8 @@ export function syncStatus(vaultDir: string, fetchFirst = false): SyncStatus {
     .filter(Boolean).length;
   let ahead = 0;
   let behind = 0;
+  let incoming: string[] = [];
+  let outgoing: string[] = [];
   if (remote) {
     if (fetchFirst) git(vaultDir, "fetch", "--quiet", "origin");
     const counts = git(
@@ -68,8 +82,49 @@ export function syncStatus(vaultDir: string, fetchFirst = false): SyncStatus {
       ahead = Number(a);
       behind = Number(b);
     }
+    const subjects = (range: string) => {
+      const out = git(vaultDir, "log", "--format=%s", "-n", "8", range);
+      return out.status === 0 ? out.stdout.split("\n").filter(Boolean) : [];
+    };
+    if (behind > 0) incoming = subjects("HEAD..@{upstream}");
+    if (ahead > 0) outgoing = subjects("@{upstream}..HEAD");
   }
-  return { versioned: true, remote, dirty, ahead, behind };
+  return { versioned: true, remote, dirty, ahead, behind, incoming, outgoing };
+}
+
+// File paths involved in each pending sync direction, for per-skill
+// indicators: uncommitted paths, paths touched by commits not yet pushed,
+// and paths touched by commits not yet pulled (as of the last fetch).
+export interface SyncFiles {
+  dirty: string[];
+  outgoing: string[];
+  incoming: string[];
+}
+
+export function syncFiles(vaultDir: string): SyncFiles {
+  if (!vaultRepo(vaultDir).isRoot)
+    return { dirty: [], outgoing: [], incoming: [] };
+  const dirty = git(vaultDir, "status", "--porcelain")
+    .stdout.split("\n")
+    .filter(Boolean)
+    .map((l) => {
+      const p = l.slice(3).trim();
+      const i = p.indexOf(" -> "); // renames: keep the new path
+      return i >= 0 ? p.slice(i + 4) : p;
+    });
+  const files = (range: string) => {
+    const out = git(vaultDir, "log", "--name-only", "--format=", range);
+    return out.status === 0
+      ? [...new Set(out.stdout.split("\n").filter(Boolean))]
+      : [];
+  };
+  const hasUpstream =
+    git(vaultDir, "rev-parse", "--abbrev-ref", "@{upstream}").status === 0;
+  return {
+    dirty,
+    outgoing: hasUpstream ? files("@{upstream}..HEAD") : [],
+    incoming: hasUpstream ? files("HEAD..@{upstream}") : [],
+  };
 }
 
 export function syncOp(vaultDir: string, apply: boolean): OpOutcome {

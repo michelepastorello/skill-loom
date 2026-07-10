@@ -69,7 +69,7 @@ export function addOp(
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     mdPath,
-    `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n`,
+    `---\nname: ${name}\ndescription: ${desc}\n# Optional taxonomy — powers grouping, filters and colors in the dashboard.\n# Uncomment and use your own vocabulary:\n# domain: my-brand\n# layer: tool\n# status: active\n# icon: sparkles\n# icon-color: teal-500\n---\n\n# ${name}\n`,
   );
   return {
     status: 0,

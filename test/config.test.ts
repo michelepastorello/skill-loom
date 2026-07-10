@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import {
@@ -36,6 +36,30 @@ test("loadConfig fills in defaults when keys are absent", () => {
   assert.deepEqual(loaded.consumers, {});
   assert.deepEqual(loaded.ignore, DEFAULT_IGNORE);
   assert.deepEqual(loaded.archived, []);
+  assert.deepEqual(loaded.names, {});
+});
+
+test("saveConfig writes consumers and names sorted by key", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "loom-test-"));
+  saveConfig(dir, {
+    schema: 1,
+    consumers: { codex: "~/.codex/skills", agents: "~/.agents/skills" },
+    ignore: [...DEFAULT_IGNORE],
+    archived: [],
+    names: { zeta: "Zeta", alfa: "Alfa" },
+  });
+  const raw = readFileSync(path.join(dir, "loom.json"), "utf8");
+  assert.ok(raw.indexOf('"agents"') < raw.indexOf('"codex"'));
+  assert.ok(raw.indexOf('"alfa"') < raw.indexOf('"zeta"'));
+});
+
+test("loadConfig reads the custom names map", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "loom-test-"));
+  writeFileSync(
+    path.join(dir, "loom.json"),
+    JSON.stringify({ schema: 1, names: { forpros: "ForPros" } }),
+  );
+  assert.deepEqual(loadConfig(dir).names, { forpros: "ForPros" });
 });
 
 test("saveConfig/loadConfig roundtrip with defaults for missing keys", () => {
@@ -45,6 +69,7 @@ test("saveConfig/loadConfig roundtrip with defaults for missing keys", () => {
     consumers: { claude: "~/.claude/skills" },
     ignore: [...DEFAULT_IGNORE],
     archived: [],
+    names: {},
   };
   saveConfig(dir, cfg);
   const loaded = loadConfig(dir);
