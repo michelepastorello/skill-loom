@@ -223,8 +223,29 @@ if __name__ == "__main__":
     main()
 `;
 
-function frontmatter(name, icon, color, desc) {
-  const fm = [`name: ${name}`, `icon: ${icon}`];
+// Orthogonal taxonomy for the demo: domain mirrors the folder, layer is the
+// kind of work the skill does. One suspended skill shows the lifecycle chip.
+const LAYER = {
+  "code-review": "review",
+  "commit-message": "authoring",
+  "test-generator": "automation",
+  "api-docs": "authoring",
+  "sql-review": "review",
+  dockerfile: "automation",
+  changelog: "automation",
+  "release-notes": "authoring",
+  "blog-draft": "authoring",
+  "readme-polish": "review",
+  "paper-summary": "analysis",
+  "market-brief": "analysis",
+  "competitor-scan": "analysis",
+};
+const STATUS = { "competitor-scan": "suspended" };
+
+function frontmatter(name, icon, color, desc, domain) {
+  const fm = [`name: ${name}`, `domain: ${domain}`, `layer: ${LAYER[name]}`];
+  if (STATUS[name]) fm.push(`status: ${STATUS[name]}`);
+  fm.push(`icon: ${icon}`);
   if (color) fm.push(`icon-color: ${color}`);
   fm.push(`description: ${desc}`);
   return `---\n${fm.join("\n")}\n---`;
@@ -262,7 +283,7 @@ for (const [cat, name, icon, color, desc] of SKILLS) {
   const body = name === "code-review" ? CR_BASE : genericBody(name, desc);
   writeFileSync(
     path.join(dir, "SKILL.md"),
-    `${frontmatter(name, icon, color, desc)}\n${body}`,
+    `${frontmatter(name, icon, color, desc, cat)}\n${body}`,
   );
 }
 writeFileSync(
@@ -301,7 +322,7 @@ git(
 const crDir = path.join(ROOT, "engineering/code-review");
 writeFileSync(
   crSkill,
-  `${frontmatter("code-review", "git-branch", null, SKILLS[0][4])}\n${CR_ENRICHED}`,
+  `${frontmatter("code-review", "git-branch", null, SKILLS[0][4], "engineering")}\n${CR_ENRICHED}`,
 );
 mkdirSync(path.join(crDir, "references"), { recursive: true });
 writeFileSync(path.join(crDir, "references/checklist.md"), CHECKLIST_MD);

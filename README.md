@@ -63,14 +63,38 @@ my-skills/
   "schema": 1,
   "consumers": {
     "claude": "~/.claude/skills",
-    "codex": "~/.agents/skills"
+    "codex": "~/.codex/skills"
   },
   "ignore": [".git", "node_modules", "__pycache__", ".venv"],
-  "archived": []
+  "archived": [],
+  "names": { "forpros": "ForPros" }
 }
 ```
 
-Any consumer is just a name and a path — add your own runtimes freely.
+Any consumer is just a name and a path — add your own runtimes freely. `init`
+pre-fills the runtimes it detects on your machine (Claude Code, Codex, Cursor,
+opencode, Gemini CLI, Amp, Windsurf, Goose, Mistral Vibe, and the shared
+`~/.agents/skills` pool); the dashboard's Settings page offers the rest as
+one-click additions. `names` overrides word casing in titles and labels
+(editable from Settings too).
+
+## SKILL.md frontmatter
+
+The dashboard is driven by a few optional frontmatter fields — use your own
+vocabulary, every value gets a stable color automatically:
+
+| Field         | Required | What it does                                                                                                  |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| `name`        | yes      | Must equal the folder name (`doctor` checks it).                                                              |
+| `description` | no       | Shown on cards and in the table; it is also what your agents read to decide when to use the skill.            |
+| `domain`      | no       | Who the skill belongs to (a brand, a project, `cross`). Groups the library and feeds the sidebar filter.      |
+| `layer`       | no       | What kind of work it does (e.g. `tool`, `review`, `authoring`). The orthogonal axis: chips, grouping, filter. |
+| `status`      | no       | Lifecycle: `active` (default) or `suspended` (parked but visible). Archiving is a separate skill-loom action. |
+| `icon`        | no       | A line-icon name for the skill tile (NotePlan-style).                                                         |
+| `icon-color`  | no       | A Tailwind-ish token (e.g. `teal-500`) overriding the tile hue.                                               |
+
+Skills without `domain`/`layer` land in an "Other" group — everything keeps
+working, the taxonomy only adds structure.
 
 ## Dashboard
 
@@ -79,11 +103,14 @@ self-contained page, no external dependencies, nothing leaves your machine.
 
 ![skill-loom dashboard — your skill library, grouped and colour-coded by category](docs/dashboard-library.png)
 
-- **My skills** — your library as cards, grouped and colour-coded by category,
-  each with a NotePlan-style icon (set `icon:` / `icon-color:` in frontmatter).
-  Status shows only when it deviates ("Needs attention", "Not active yet") so a
-  healthy vault stays calm. Full-text search, plus keyboard navigation — arrows
-  to select a skill, <kbd>Enter</kbd> to open.
+- **My skills** — your library as a sortable table (or a card grid, <kbd>g</kbd>
+  toggles), grouped by `domain` or `layer` with per-value colors and chips. The
+  sidebar filters by domain, layer, lifecycle status, link state and git sync
+  state, composing with full-text search. Each row answers the operational
+  questions at a glance: lifecycle (`active` / `suspended`), links (`linked` /
+  `partial` / `not linked` / `conflict`) and sync (`synced` / `to commit` /
+  `to push` / `to pull`). On open, a live check against your git remote offers
+  push/pull when the vault is out of sync.
 - **Skill page** — a three-pane view: files on the left, the guide rendered as a
   clean document (with syntax highlighting in the source view) in the centre, and
   runtime toggles + git history on the right. "See what changed" opens the commit

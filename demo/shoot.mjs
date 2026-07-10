@@ -33,14 +33,14 @@ const ctx = await browser.newContext({
 });
 const page = await ctx.newPage();
 await page.goto(url, { waitUntil: "networkidle" });
-await page.waitForSelector(".card");
+await page.waitForSelector("#groups [data-skill]");
 
 if (skill) {
   await page.evaluate((name) => {
-    const card = [...document.querySelectorAll(".card")].find((el) =>
-      new RegExp(name, "i").test(el.textContent || ""),
+    const row = [...document.querySelectorAll("#groups [data-skill]")].find(
+      (el) => new RegExp(name, "i").test(el.textContent || ""),
     );
-    if (card) card.click();
+    if (row) row.click();
   }, skill);
   await page.waitForSelector("#filelist .file");
   await page.waitForSelector("#history .commit");
