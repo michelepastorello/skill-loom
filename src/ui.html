@@ -147,6 +147,8 @@
         --line: oklch(90.5% 0.011 232);
         --hair: oklch(93.5% 0.009 232);
         --fg: oklch(26% 0.018 245);
+        --prose: oklch(33% 0.018 245);
+        --prose-b: oklch(24% 0.018 245);
         --dim: oklch(50% 0.02 242);
         --faint: oklch(57.5% 0.017 240);
         --accent: oklch(48.5% 0.115 205);
@@ -173,6 +175,8 @@
           --line: oklch(34% 0.016 245);
           --hair: oklch(30% 0.014 245);
           --fg: oklch(92% 0.01 240);
+          --prose: oklch(81% 0.012 240);
+          --prose-b: oklch(86.5% 0.011 240);
           --dim: oklch(70% 0.014 240);
           --faint: oklch(58% 0.014 240);
           --accent: oklch(78% 0.1 205);
@@ -315,14 +319,19 @@
 
       /* ── buttons ────────────────────────────────────────────────────────── */
       .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 32px;
+        box-sizing: border-box;
         font: inherit;
-        font-size: 13.5px;
+        font-size: 13px;
         font-weight: 500;
         color: var(--fg);
         border: 1px solid var(--line);
         background: var(--surface);
         border-radius: 9px;
-        padding: 7px 13px;
+        padding: 0 13px;
         cursor: pointer;
       }
       .btn:hover {
@@ -355,6 +364,10 @@
         color: var(--accent);
       }
       .new {
+        display: inline-flex;
+        align-items: center;
+        height: 34px;
+        box-sizing: border-box;
         font: inherit;
         font-size: 13px;
         font-weight: 600;
@@ -362,7 +375,7 @@
         background: var(--accent);
         border: 0;
         border-radius: 9px;
-        padding: 8px 14px;
+        padding: 0 14px;
         cursor: pointer;
       }
 
@@ -458,6 +471,307 @@
         height: 7px;
         border-radius: 50%;
         background: var(--ok);
+      }
+
+      /* ── taxonomy: command rail + library bar + ledger + chips ─────────── */
+      .seg {
+        display: inline-flex;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 3px;
+        gap: 2px;
+      }
+      .seg button {
+        border: 0;
+        background: transparent;
+        color: var(--dim);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 5px 13px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .seg button.on {
+        background: var(--surface);
+        color: var(--fg);
+        box-shadow: var(--shadow-sm);
+      }
+      .seg button:not(.on):hover {
+        color: var(--fg);
+      }
+      .librail .rl {
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--faint);
+        margin: 20px 8px 7px;
+      }
+      .librail .rl:first-child {
+        margin-top: 0;
+      }
+      .librail .seg {
+        display: flex;
+        margin: 0 2px;
+      }
+      .librail .seg button {
+        flex: 1;
+        font-size: 11.5px;
+        padding: 4px 0;
+      }
+      .ritem {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: var(--dim);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 550;
+        padding: 5px 8px;
+        border-radius: 7px;
+        cursor: pointer;
+        text-align: left;
+      }
+      .ritem:hover {
+        background: var(--panel);
+        color: var(--fg);
+      }
+      .ritem.on {
+        background: var(--accent-soft);
+        color: var(--fg);
+        font-weight: 650;
+      }
+      .ritem .d {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--cat, var(--dim));
+        flex: none;
+      }
+      .ritem .n {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--faint);
+        font-variant-numeric: tabular-nums;
+      }
+      /* one control height for the whole bar: search, sort seg, view toggle */
+      .libbar {
+        --ctlh: 40px;
+        display: flex;
+        align-items: stretch;
+        gap: 10px;
+        margin-bottom: 24px;
+      }
+      .libbar .search {
+        flex: 1;
+        height: var(--ctlh);
+        margin-bottom: 0;
+        padding: 0 14px;
+        box-sizing: border-box;
+      }
+      .libbar .seg {
+        height: var(--ctlh);
+        box-sizing: border-box;
+        align-items: stretch;
+      }
+      .libbar .seg button {
+        display: inline-flex;
+        align-items: center;
+        padding: 0 14px;
+      }
+      .libbar .seg svg {
+        width: 15px;
+        height: 15px;
+        display: block;
+      }
+      .syncbanner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        background: var(--accent-soft);
+        border: 1px solid color-mix(in oklab, var(--accent) 35%, transparent);
+        border-radius: 11px;
+        padding: 11px 14px;
+        margin-bottom: 16px;
+        font-size: 13.5px;
+      }
+      .syncbanner .sbt b {
+        font-weight: 650;
+      }
+      .syncbanner .sba {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .syncbanner .sbx {
+        border: 0;
+        background: transparent;
+        color: var(--dim);
+        font: inherit;
+        font-size: 17px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      .syncbanner .sbx:hover {
+        color: var(--fg);
+        background: var(--panel);
+      }
+      /* ledger (list view) */
+      table.ledger {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13.5px;
+      }
+      table.ledger th {
+        text-align: left;
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--faint);
+        font-weight: 700;
+        padding: 7px 10px;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      table.ledger th[data-sort] {
+        cursor: pointer;
+      }
+      table.ledger th[data-sort]:hover {
+        color: var(--fg);
+      }
+      table.ledger td {
+        padding: 8px 10px;
+        border-bottom: 1px solid
+          color-mix(in oklab, var(--line) 55%, transparent);
+        vertical-align: middle;
+      }
+      table.ledger tr.lsec td {
+        padding: 16px 10px 6px;
+        border-bottom: 1px solid var(--line);
+      }
+      table.ledger tr[data-skill] {
+        cursor: pointer;
+      }
+      table.ledger tr[data-skill]:hover td {
+        background: color-mix(in oklab, var(--panel) 55%, transparent);
+      }
+      .lsechead {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+      .lsechead .catdot {
+        width: 8px;
+        height: 8px;
+      }
+      .lsechead h2 {
+        font-size: 14px;
+        margin: 0;
+        font-weight: 700;
+      }
+      .lsechead .n {
+        font-size: 11.5px;
+        color: var(--dim);
+      }
+      .lname {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+      .ledger .tile {
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        font-size: 11px;
+      }
+      .ledger .tile svg {
+        width: 13px;
+        height: 13px;
+      }
+      td.ldesc {
+        color: var(--dim);
+        font-size: 13px;
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      td.lwhen {
+        color: var(--faint);
+        font-size: 12px;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      td.lnone {
+        color: var(--faint);
+        font-size: 12px;
+      }
+      .covlegend {
+        font-size: 12px;
+        color: var(--faint);
+        margin: 2px 0 10px;
+      }
+      .covlegend b {
+        color: var(--dim);
+        font-weight: 650;
+      }
+      .tscroll {
+        overflow-x: auto;
+      }
+      .taxchip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        color: var(--cat, var(--dim));
+        background: var(--cat-soft, var(--panel));
+        padding: 2px 8px;
+        border-radius: 6px;
+      }
+      .taxchip .tcdot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--cat, var(--dim));
+        flex: none;
+      }
+      .badge.bad {
+        color: var(--err);
+        background: color-mix(in oklab, var(--err) 16%, transparent);
+      }
+      .badge.acc {
+        color: var(--accent);
+        background: var(--accent-soft);
+      }
+      .ledger .badge,
+      .coverage .badge {
+        font-size: 11.5px;
+        padding: 3px 9px;
+        white-space: nowrap;
+      }
+      .taxmiss {
+        margin-top: 14px;
+        font-size: 13px;
+        color: var(--dim);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
       }
 
       /* ── library ────────────────────────────────────────────────────────── */
@@ -592,6 +906,18 @@
       .card .foot {
         margin-top: auto;
         padding-top: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px 10px;
+        flex-wrap: wrap;
+      }
+      .card .foot-l,
+      .card .foot-r {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
       }
       .archivedlink {
         display: inline-block;
@@ -931,6 +1257,20 @@
       }
 
       /* ── markdown document body ─────────────────────────────────────────── */
+      /* Body prose sits one step below --fg so bold and headings (kept at
+         --fg) visibly stand out, especially in dark mode. */
+      .md {
+        color: var(--prose);
+      }
+      .md h1,
+      .md h2,
+      .md h3,
+      .md h4 {
+        color: var(--fg);
+      }
+      .md strong {
+        color: var(--prose-b);
+      }
       .md .lede {
         font-size: 16.5px;
         line-height: 1.6;
@@ -1473,7 +1813,8 @@
         display: flex;
       }
       body.fixed #app > .layout,
-      body.fixed #app > .statuslayout {
+      body.fixed #app > .statuslayout,
+      body.fixed #app > .liblayout {
         flex: 1 1 auto;
         min-height: 0;
       }
@@ -1491,14 +1832,38 @@
         animation: loomfade 0.15s ease-out;
       }
 
-      /* library */
-      .libpad {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 24px 26px 80px;
+      /* library: full-bleed two-pane (rail on --bg, main on --surface) */
+      .liblayout {
+        display: grid;
+        grid-template-columns: 236px minmax(0, 1fr);
       }
-      .libpad .grid {
+      .liblayout .librail {
+        min-height: 0;
+        overflow-y: auto;
+        background: var(--bg);
+        border-right: 1px solid var(--line);
+        padding: 20px 14px 28px;
+      }
+      .libmain {
+        min-height: 0;
+        min-width: 0;
+        overflow-y: auto;
+        background: var(--surface);
+        padding: 26px 36px 90px;
+      }
+      .libmain .grid {
         grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      }
+      @media (max-width: 900px) {
+        .liblayout {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto 1fr;
+        }
+        .liblayout .librail {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          max-height: 36vh;
+        }
       }
       .catsec {
         margin-bottom: 4px;
@@ -1507,7 +1872,10 @@
         display: flex;
         align-items: center;
         gap: 16px;
-        margin: 6px 0 4px;
+        margin: 6px 0 18px;
+      }
+      .libhead .sub {
+        margin: 4px 0 0;
       }
       .libhead h1.view {
         margin: 0;
@@ -2347,7 +2715,12 @@
           };
           const oy = () => done(input.value);
           const on = () => done(null);
-          const oc = () => done(null);
+          // "close" fires as a queued task: when two prompts chain, the first
+          // dialog's close lands AFTER the second showModal() and would kill
+          // it. A genuine close always has dlg.open === false; ignore the rest.
+          const oc = () => {
+            if (!dlg.open) done(null);
+          };
           const onKey = (e) => {
             if (e.key === "Enter") {
               e.preventDefault();
@@ -2379,11 +2752,26 @@
         if (Number.isNaN(d.getTime())) return iso;
         return d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
       }
+      // Humanize a kebab value/path. Word casing comes from state.names (built-in
+      // acronyms/proper nouns merged with the vault's loom.json `names` map);
+      // otherwise sentence case: first word capitalized, the rest lowercase.
       function humanCat(cat) {
         if (cat === "." || cat === "") return "Other";
+        const names = (state && state.names) || {};
         return cat
           .split("/")
-          .map((p) => p.charAt(0).toUpperCase() + p.slice(1).replace(/-/g, " "))
+          .map((seg) =>
+            seg
+              .split("-")
+              .map((w, i) =>
+                names[w] !== undefined
+                  ? names[w]
+                  : i === 0
+                    ? w.charAt(0).toUpperCase() + w.slice(1)
+                    : w,
+              )
+              .join(" "),
+          )
           .join(" / ");
       }
       function catOf(s) {
@@ -2404,20 +2792,76 @@
         const hue = CAT_HUES[catHash(key) % CAT_HUES.length];
         return `--cat:oklch(59% 0.135 ${hue});--cat-soft:oklch(59% 0.135 ${hue} / 0.16)`;
       }
-      // Flat skill order matching how the library renders (by category section,
-      // then within) — used for detail prev/next so arrows follow what you see.
-      // Keep the grouping + sort in sync with renderLibrary(); if they diverge,
-      // arrow nav jumps unpredictably.
-      function libraryOrder() {
+      // Taxonomy hue: rank-based over the axis's distinct values (sorted), so up
+      // to 8 values per axis get 8 DIFFERENT hues (hashing collides). The stride
+      // (3, coprime with 8) spreads alphabetically-adjacent values far apart on
+      // the wheel. Same value gets the same hue as a section header and as a
+      // card chip. Falls back to the hash for unknown/empty values.
+      function taxHueStyle(axis, value) {
+        const vals = [
+          ...new Set((state.skills || []).map((s) => s[axis]).filter(Boolean)),
+        ].sort();
+        const i = vals.indexOf(value);
+        const hue =
+          i >= 0
+            ? CAT_HUES[(i * 3) % CAT_HUES.length]
+            : CAT_HUES[catHash(value || "other") % CAT_HUES.length];
+        return `--cat:oklch(59% 0.135 ${hue});--cat-soft:oklch(59% 0.135 ${hue} / 0.16)`;
+      }
+      // Single source of truth for library grouping + order. renderLibrary and
+      // libraryOrder (detail arrow-nav) BOTH consume this, so they cannot drift.
+      function groupKeyOf(s) {
+        if (groupAxis === "layer") return s.layer || "";
+        if (groupAxis === "domain") return s.domain || "";
+        return "";
+      }
+      // The axis you are NOT grouping by (null in "none" mode).
+      function orthAxisOf() {
+        return groupAxis === "domain"
+          ? "layer"
+          : groupAxis === "layer"
+            ? "domain"
+            : null;
+      }
+      function groupedSkills() {
         const groups = new Map();
         for (const s of state.skills || []) {
-          const raw = catOf(s);
-          if (!groups.has(raw)) groups.set(raw, []);
-          groups.get(raw).push(s.name);
+          const k = groupKeyOf(s);
+          if (!groups.has(k)) groups.set(k, []);
+          groups.get(k).push(s);
         }
-        return [...groups.keys()]
-          .sort((a, b) => humanCat(a).localeCompare(humanCat(b)))
-          .flatMap((raw) => groups.get(raw));
+        // Within a group: alphabetical by name, or by modified date (ledger
+        // column sort). sortDir flips the primary key only. Sections
+        // themselves are alphabetical.
+        const cmp =
+          sortMode === "updated"
+            ? (a, b) =>
+                sortDir * (a.modified || "").localeCompare(b.modified || "") ||
+                a.title.localeCompare(b.title)
+            : (a, b) => sortDir * a.title.localeCompare(b.title);
+        return [...groups.entries()]
+          .map(([key, items]) => ({
+            key,
+            label: humanCat(key),
+            items: items.sort(cmp),
+          }))
+          .sort((a, b) => a.label.localeCompare(b.label));
+      }
+      // The rail filters as a pure predicate (search is DOM-only and excluded):
+      // shared by filterLibrary, libraryOrder (arrow-nav) and the detail rail.
+      function passesFilters(s) {
+        return (
+          (!statusFilter || (s.status || "active") === statusFilter) &&
+          (!domainFilter || s.domain === domainFilter) &&
+          (!layerFilter || s.layer === layerFilter) &&
+          (!linkFilter || linkStateOf(s) === linkFilter) &&
+          (!syncFilter || (s.sync || "clean") === syncFilter)
+        );
+      }
+      function libraryOrder() {
+        return groupedSkills().flatMap((g) =>
+          g.items.filter(passesFilters).map((s) => s.name),
+        );
       }
       // Named icons (Lucide-style inner markup; wrapped in a stroke <svg> at use).
       // Add a name here + set `icon: <name>` in a skill's frontmatter to use it.
@@ -2659,8 +3103,8 @@
         if (health === "active")
           return `<span class="badge ok">${CHECK}${esc(extra || "Active everywhere")}</span>`;
         if (health === "attention")
-          return `<span class="badge warn">${WARNI}${esc(extra || "Needs attention")}</span>`;
-        return `<span class="badge off">${esc(extra || "Not active yet")}</span>`;
+          return `<span class="badge warn" title="Runtime links need attention">${WARNI}${esc(extra || "Attention")}</span>`;
+        return `<span class="badge off" title="Not linked into any runtime yet">${esc(extra || "Not active")}</span>`;
       }
 
       /* ---------- routing ---------- */
@@ -2679,6 +3123,9 @@
         $("#nav-settings").classList.toggle("on", curView === "settings");
       }
       function go(view, arg) {
+        // Rendered/Source persists while navigating between skills in the
+        // detail view; it resets to Rendered when you re-enter from a list.
+        if (view === "detail" && curView !== "detail") viewMode = "rendered";
         curView = view;
         if (view !== "detail") current = null;
         render(arg);
@@ -2696,6 +3143,16 @@
 
       /* ---------- library ---------- */
       let searchQ = "";
+      let syncBannerDismissed = false;
+      let groupAxis = "domain"; // "domain" | "layer" | "none"
+      let sortMode = "name"; // "name" | "axis" (orthogonal taxonomy axis) | "updated"
+      let sortDir = 1; // 1 asc, -1 desc (toggled by ledger column headers)
+      let libView = "list"; // "grid" | "list"
+      let statusFilter = null; // null = all, else a status value
+      let domainFilter = null; // null = all, else a domain value
+      let layerFilter = null; // null = all, else a layer value
+      let linkFilter = null; // null = all, else a link state
+      let syncFilter = null; // null = all, else a sync state (internal value)
       // keyboard selection over the (grid) card list: arrows move, Enter opens
       let libSelName = null;
       function libHighlight(name) {
@@ -2745,68 +3202,433 @@
             best = m;
         if (best) libHighlight(best.c.dataset.skill);
       }
+      function statusLabel(s) {
+        return s === "active"
+          ? "Active"
+          : s === "suspended"
+            ? "Suspended"
+            : humanCat(s);
+      }
+      // Lifecycle chip, same filled style as the Links/Sync chips. The grid
+      // stays exception-only (active shows nothing); the ledger passes
+      // showActive to state every row.
+      function statusBadge(status, showActive) {
+        const st = status || "active";
+        if (st === "active")
+          return showActive ? `<span class="badge ok">active</span>` : "";
+        const cls = st === "suspended" ? "warn" : "off";
+        return `<span class="badge ${cls}">${esc(statusLabel(st).toLowerCase())}</span>`;
+      }
+      // Colored via taxHueStyle (rank-based per axis), so each domain/layer value
+      // reads with its own hue at a glance and matches its section accent.
+      function taxChip(axis, v) {
+        return `<span class="taxchip" style="${taxHueStyle(axis, v)}"><span class="tcdot"></span>${esc(humanCat(v))}</span>`;
+      }
+      // Orthogonal axis chip(s): the axis you are NOT grouping by. "none" shows both.
+      function orthChips(s) {
+        const out = [];
+        if ((groupAxis === "domain" || groupAxis === "none") && s.layer)
+          out.push(taxChip("layer", s.layer));
+        if ((groupAxis === "layer" || groupAxis === "none") && s.domain)
+          out.push(taxChip("domain", s.domain));
+        return out.join("");
+      }
+      function libCard(s) {
+        const hay = (
+          s.title +
+          " " +
+          s.name +
+          " " +
+          (s.description || "") +
+          " " +
+          (s.domain || "") +
+          " " +
+          (s.layer || "")
+        ).toLowerCase();
+        const chips = orthChips(s);
+        const badges = statusBadge(s.status);
+        const foot =
+          chips || badges
+            ? `<div class="foot"><span class="foot-l">${chips}</span><span class="foot-r">${badges}</span></div>`
+            : "";
+        return `<a class="card" data-skill="${esc(s.name)}" data-hay="${esc(hay)}" data-domain="${esc(s.domain || "")}" data-layer="${esc(s.layer || "")}" data-status="${esc(s.status || "active")}" data-link="${esc(linkStateOf(s))}" data-sync="${esc(s.sync || "clean")}"><div class="top">${skillTile(s)}<div class="headwrap"><h3>${esc(s.title)}</h3></div><span class="when">${esc(fmtWhen(s.modified))}</span></div><p>${esc(s.description || "No description yet.")}</p>${foot}</a>`;
+      }
+      // Command rail: Group switch + Domain / Layer / Status lists with counts.
+      // Counts are a snapshot of the whole vault, not of the current filter.
+      const STATUS_ORDER = ["active", "suspended"];
+      const STATUS_DOT = {
+        active: "var(--ok)",
+        suspended: "var(--warn)",
+      };
+      function axisValues(axis) {
+        return [
+          ...new Set((state.skills || []).map((s) => s[axis]).filter(Boolean)),
+        ].sort();
+      }
+      function renderRailHtml() {
+        const counts = (axis) => {
+          const m = {};
+          for (const s of state.skills || []) {
+            const v = axis === "status" ? s.status || "active" : s[axis];
+            if (v) m[v] = (m[v] || 0) + 1;
+          }
+          return m;
+        };
+        const seg = (a, lbl) =>
+          `<button data-axis="${a}"${groupAxis === a ? ' class="on"' : ""} type="button">${lbl}</button>`;
+        const item = (kind, v, label, count, on, style) =>
+          `<button class="ritem${on ? " on" : ""}" data-kind="${kind}" data-v="${esc(v)}" style="${style}" type="button"><span class="d"></span>${esc(label)}<span class="n">${count}</span></button>`;
+        const dc = counts("domain");
+        const lc = counts("layer");
+        const sc = counts("status");
+        const kc = {};
+        const yc = {};
+        for (const sk of state.skills || []) {
+          const k = linkStateOf(sk);
+          kc[k] = (kc[k] || 0) + 1;
+          const y = sk.sync || "clean";
+          yc[y] = (yc[y] || 0) + 1;
+        }
+        const statuses = STATUS_ORDER.filter((s) => sc[s]).concat(
+          Object.keys(sc).filter((s) => !STATUS_ORDER.includes(s)),
+        );
+        return (
+          `<div class="rl">Group by</div><div class="seg" id="groupby">${seg("domain", "Domain")}${seg("layer", "Layer")}${seg("none", "None")}</div>` +
+          `<div class="rl">Domain</div>` +
+          axisValues("domain")
+            .map((v) =>
+              item(
+                "domain",
+                v,
+                humanCat(v),
+                dc[v],
+                domainFilter === v,
+                taxHueStyle("domain", v),
+              ),
+            )
+            .join("") +
+          `<div class="rl">Layer</div>` +
+          axisValues("layer")
+            .map((v) =>
+              item(
+                "layer",
+                v,
+                humanCat(v),
+                lc[v],
+                layerFilter === v,
+                taxHueStyle("layer", v),
+              ),
+            )
+            .join("") +
+          `<div class="rl">Status</div>` +
+          statuses
+            .map((v) =>
+              item(
+                "status",
+                v,
+                statusLabel(v),
+                sc[v],
+                statusFilter === v,
+                `--cat:${STATUS_DOT[v] || "var(--dim)"}`,
+              ),
+            )
+            .join("") +
+          `<div class="rl">Links</div>` +
+          LINK_ORDER.filter((v) => kc[v])
+            .map((v) =>
+              item(
+                "link",
+                v,
+                cap(v),
+                kc[v],
+                linkFilter === v,
+                `--cat:${LINK_DOT[v]}`,
+              ),
+            )
+            .join("") +
+          `<div class="rl">Sync</div>` +
+          SYNC_ORDER.filter((v) => yc[v])
+            .map((v) =>
+              item(
+                "sync",
+                v,
+                cap(SYNC_LABEL[v]),
+                yc[v],
+                syncFilter === v,
+                `--cat:${SYNC_DOT[v]}`,
+              ),
+            )
+            .join("")
+        );
+      }
+      // Per-skill link summary from the runtime matrix, in the same words as
+      // the Status legend: linked / partial / not linked / conflict.
+      function linkStateOf(s) {
+        const states = (state.matrix || [])
+          .filter((m) => m.skill === s.name)
+          .map((m) => m.state);
+        if (states.length && states.every((x) => x === "linked"))
+          return "linked";
+        if (states.some((x) => x === "foreign" || x === "broken"))
+          return "conflict";
+        if (states.some((x) => x === "linked")) return "partial";
+        return "not linked";
+      }
+      const LINK_ORDER = ["linked", "partial", "not linked", "conflict"];
+      const LINK_CLS = {
+        linked: "ok",
+        partial: "warn",
+        "not linked": "off",
+        conflict: "bad",
+      };
+      const LINK_DOT = {
+        linked: "var(--ok)",
+        partial: "var(--warn)",
+        "not linked": "var(--dim)",
+        conflict: "var(--err)",
+      };
+      const SYNC_ORDER = ["clean", "dirty", "ahead", "behind"];
+      const SYNC_LABEL = {
+        clean: "synced",
+        dirty: "to commit",
+        ahead: "to push",
+        behind: "to pull",
+      };
+      const SYNC_DOT = {
+        clean: "var(--ok)",
+        dirty: "var(--warn)",
+        ahead: "var(--accent)",
+        behind: "var(--accent)",
+      };
+      function linkCell(s) {
+        const v = linkStateOf(s);
+        const title =
+          v === "conflict"
+            ? ' title="Something that is not the vault\'s link owns the runtime path"'
+            : v === "partial"
+              ? ' title="Linked into some runtimes, not all"'
+              : "";
+        return `<span class="badge ${LINK_CLS[v]}"${title}>${esc(v)}</span>`;
+      }
+      // Per-skill git state: what this skill still needs before it is aligned
+      // with the remote (from the last fetch; the on-open check refreshes it).
+      function syncCell(v) {
+        if (v === "dirty")
+          return `<span class="badge warn" title="Uncommitted edits under this skill">to commit</span>`;
+        if (v === "ahead")
+          return `<span class="badge acc" title="In commits not pushed yet">to push</span>`;
+        if (v === "behind")
+          return `<span class="badge acc" title="In remote commits not pulled yet">to pull</span>`;
+        return `<span class="badge ok" title="Committed and aligned with the remote">synced</span>`;
+      }
+      // Ledger (list view): one row per skill, a tbody per group so filtering
+      // can hide whole groups; column headers write sortMode/sortDir, which
+      // groupedSkills() consumes — table order and arrow-nav stay in step.
+      function renderTableHtml() {
+        const orth = orthAxisOf();
+        const axisCols = groupAxis === "none" ? ["domain", "layer"] : [orth];
+        const arrow = (c) =>
+          sortMode === c
+            ? `<span class="arr">${sortDir > 0 ? "▲" : "▼"}</span>`
+            : "";
+        const head =
+          `<thead><tr><th data-sort="name">Skill ${arrow("name")}</th><th>Description</th>` +
+          axisCols
+            .map((a) => `<th>${a === "layer" ? "Layer" : "Domain"}</th>`)
+            .join("") +
+          `<th>Status</th><th>Links</th><th>Sync</th><th data-sort="updated">Updated ${arrow("updated")}</th></tr></thead>`;
+        const bodies = groupedSkills()
+          .map((g) => {
+            const secRow =
+              groupAxis === "none"
+                ? ""
+                : `<tr class="lsec"><td colspan="${6 + axisCols.length}"><span class="lsechead" style="${taxHueStyle(groupAxis, g.key)}"><span class="catdot"></span><h2>${esc(g.label)}</h2><span class="n">${g.items.length} skill${g.items.length === 1 ? "" : "s"}</span></span></td></tr>`;
+            const rows = g.items
+              .map((s) => {
+                const hay = (
+                  s.title +
+                  " " +
+                  s.name +
+                  " " +
+                  (s.description || "") +
+                  " " +
+                  (s.domain || "") +
+                  " " +
+                  (s.layer || "")
+                ).toLowerCase();
+                const cells = axisCols
+                  .map((a) =>
+                    s[a]
+                      ? `<td>${taxChip(a, s[a])}</td>`
+                      : `<td class="lnone">–</td>`,
+                  )
+                  .join("");
+                return `<tr data-skill="${esc(s.name)}" data-hay="${esc(hay)}" data-domain="${esc(s.domain || "")}" data-layer="${esc(s.layer || "")}" data-status="${esc(s.status || "active")}" data-link="${esc(linkStateOf(s))}" data-sync="${esc(s.sync || "clean")}"><td><span class="lname">${skillTile(s)}${esc(s.title)}</span></td><td class="ldesc">${esc(s.description || "")}</td>${cells}<td>${statusBadge(s.status, true)}</td><td>${linkCell(s)}</td><td>${syncCell(s.sync)}</td><td class="lwhen">${esc(fmtWhen(s.modified))}</td></tr>`;
+              })
+              .join("");
+            return `<tbody class="lgroup">${secRow}${rows}</tbody>`;
+          })
+          .join("");
+        return `<div class="tscroll"><table class="ledger" id="ledger">${head}${bodies}</table></div>`;
+      }
+      // On open, a dry sync check proposes push/pull so the vault stays
+      // aligned with the remote (dismissable, once per session).
+      function syncBannerHtml() {
+        if (
+          syncBannerDismissed ||
+          !sync ||
+          !sync.versioned ||
+          !sync.remote ||
+          (!sync.ahead && !sync.behind && !sync.dirty)
+        )
+          return "";
+        const parts = [];
+        if (sync.dirty)
+          parts.push(
+            `${sync.dirty} unsaved change${sync.dirty === 1 ? "" : "s"}`,
+          );
+        if (sync.ahead)
+          parts.push(
+            `${sync.ahead} commit${sync.ahead === 1 ? "" : "s"} to push`,
+          );
+        if (sync.behind)
+          parts.push(
+            `${sync.behind} commit${sync.behind === 1 ? "" : "s"} to pull`,
+          );
+        return `<div class="syncbanner"><span class="sbt"><b>Vault out of sync.</b> ${esc(parts.join(" · "))}.</span><span class="sba"><button class="btn primary" id="syncnow" type="button">Sync now</button><button class="btn" data-go="status" type="button">Review</button><button class="sbx" id="syncdismiss" type="button" aria-label="Dismiss">×</button></span></div>`;
+      }
       function renderLibrary() {
         const consumers = Object.keys(state.consumers).map(cap).join(" and ");
         const total = state.skills.length;
-        // Grouping + sort below must stay in sync with libraryOrder() (arrow nav).
-        const groups = new Map();
-        for (const s of state.skills) {
-          const raw = catOf(s);
-          if (!groups.has(raw)) groups.set(raw, []);
-          groups.get(raw).push(s);
-        }
         let groupsHtml = "";
-        const rawKeys = [...groups.keys()].sort((a, b) =>
-          humanCat(a).localeCompare(humanCat(b)),
-        );
-        for (const raw of rawKeys) {
-          const items = groups.get(raw);
-          const cards = items
-            .map(
-              (s) =>
-                `<a class="card" data-skill="${esc(s.name)}" data-hay="${esc((s.title + " " + s.name + " " + (s.description || "")).toLowerCase())}"><div class="top">${skillTile(s)}<div class="headwrap"><h3>${esc(s.title)}</h3></div><span class="when">${esc(fmtWhen(s.modified))}</span></div><p>${esc(s.description || "No description yet.")}</p>${s.health !== "active" ? `<div class="foot">${healthBadge(s.health)}</div>` : ""}</a>`,
-            )
-            .join("");
-          groupsHtml += `<section class="catsec" style="${catStyle(raw)}"><div class="cat"><span class="catdot"></span><h2>${esc(humanCat(raw))}</h2><span class="n">${items.length} skill${items.length === 1 ? "" : "s"}</span></div><div class="grid">${cards}</div></section>`;
+        if (libView === "list") {
+          groupsHtml = renderTableHtml();
+        } else {
+          for (const g of groupedSkills()) {
+            const cards = g.items.map(libCard).join("");
+            if (groupAxis === "none") {
+              groupsHtml += `<section class="catsec"><div class="grid">${cards}</div></section>`;
+            } else {
+              groupsHtml += `<section class="catsec" style="${taxHueStyle(groupAxis, g.key)}"><div class="cat"><span class="catdot"></span><h2>${esc(g.label)}</h2><span class="n">${g.items.length} skill${g.items.length === 1 ? "" : "s"}</span></div><div class="grid">${cards}</div></section>`;
+            }
+          }
         }
         const archived = state.archived || [];
-        setFixed(false);
-        app().innerHTML = `<main class="libpad">
-          <div class="libhead"><h1 class="view">Your skill library</h1><button class="new" data-go="new">+ New skill</button></div>
-          <p class="sub">${total} skill${total === 1 ? "" : "s"}${consumers ? `, shared with ${esc(consumers)}` : ""}. <span id="syncnote"></span></p>
-          <div class="search">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5.2" stroke="currentColor" stroke-width="1.5"/><path d="M11 11l3.4 3.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-            <input id="search" placeholder="Search your skills…" value="${esc(searchQ)}" />
-          </div>
-          <div id="groups">${groupsHtml}</div>
-          <div id="noresult" class="empty" hidden></div>
-          ${archived.length ? `<button class="archivedlink" data-go="archived">Archived skills (${archived.length}) →</button>` : ""}
-        </main>`;
+        const GRID_IC =
+          '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>';
+        const LIST_IC =
+          '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.5" cy="4" r="0.8" fill="currentColor" stroke="none"/><circle cx="2.5" cy="8" r="0.8" fill="currentColor" stroke="none"/><circle cx="2.5" cy="12" r="0.8" fill="currentColor" stroke="none"/></svg>';
+        setFixed(true);
+        app().innerHTML = `<div class="liblayout">
+          <aside class="librail" id="librail">${renderRailHtml()}</aside>
+          <main class="libmain">
+            <div class="libhead"><div><h1 class="view">Your skill library</h1><p class="sub">${total} skill${total === 1 ? "" : "s"}${consumers ? `, shared with ${esc(consumers)}` : ""}. <span id="syncnote"></span></p></div><button class="new" data-go="new">+ New skill</button></div>
+            ${syncBannerHtml()}
+            <div class="libbar">
+              <div class="search">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5.2" stroke="currentColor" stroke-width="1.5"/><path d="M11 11l3.4 3.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <input id="search" placeholder="Search your skills…" value="${esc(searchQ)}" />
+              </div>
+              <div class="seg" id="viewtoggle"><button data-view="grid"${libView === "grid" ? ' class="on"' : ""} type="button" aria-label="Grid view">${GRID_IC}</button><button data-view="list"${libView === "list" ? ' class="on"' : ""} type="button" aria-label="List view">${LIST_IC}</button></div>
+            </div>
+            <div id="groups">${groupsHtml}</div>
+            <div id="noresult" class="empty" hidden></div>
+            ${archived.length ? `<button class="archivedlink" data-go="archived">Archived skills (${archived.length}) →</button>` : ""}
+          </main>
+        </div>`;
         $("#search").addEventListener("input", (e) => {
           searchQ = e.target.value;
           filterLibrary();
         });
-        if (searchQ) filterLibrary();
+        if ($("#syncnow")) $("#syncnow").addEventListener("click", doSaveSync);
+        if ($("#syncdismiss"))
+          $("#syncdismiss").addEventListener("click", () => {
+            syncBannerDismissed = true;
+            renderLibrary();
+          });
+        $("#librail").addEventListener("click", (e) => {
+          const g = e.target.closest("#groupby button");
+          if (g) {
+            groupAxis = g.dataset.axis;
+            renderLibrary();
+            return;
+          }
+          const b = e.target.closest(".ritem");
+          if (!b) return;
+          const v = b.dataset.v;
+          if (b.dataset.kind === "domain")
+            domainFilter = domainFilter === v ? null : v;
+          else if (b.dataset.kind === "layer")
+            layerFilter = layerFilter === v ? null : v;
+          else if (b.dataset.kind === "link")
+            linkFilter = linkFilter === v ? null : v;
+          else if (b.dataset.kind === "sync")
+            syncFilter = syncFilter === v ? null : v;
+          else statusFilter = statusFilter === v ? null : v;
+          $("#librail").innerHTML = renderRailHtml();
+          filterLibrary();
+        });
+        $("#viewtoggle").addEventListener("click", (e) => {
+          const b = e.target.closest("button");
+          if (!b || b.dataset.view === libView) return;
+          libView = b.dataset.view;
+          if (libView === "grid" && sortMode === "updated") {
+            sortMode = "name";
+            sortDir = 1;
+          }
+          renderLibrary();
+        });
+        const lt = $("#ledger");
+        if (lt)
+          lt.addEventListener("click", (e) => {
+            const th = e.target.closest("th[data-sort]");
+            if (!th) return;
+            if (sortMode === th.dataset.sort) sortDir = -sortDir;
+            else {
+              sortMode = th.dataset.sort;
+              sortDir = 1;
+            }
+            renderLibrary();
+          });
+        filterLibrary();
         if (libSelName) libHighlight(libSelName);
         renderSyncNote();
       }
       function filterLibrary() {
         const q = searchQ.trim().toLowerCase();
         let anyVisible = false;
-        document.querySelectorAll("#groups .catsec").forEach((sec) => {
-          let vis = false;
-          sec.querySelectorAll(".card").forEach((c) => {
-            const hit = !q || c.dataset.hay.includes(q);
-            c.hidden = !hit;
-            if (hit) vis = true;
+        document
+          .querySelectorAll("#groups .catsec, #groups tbody.lgroup")
+          .forEach((sec) => {
+            let vis = false;
+            sec.querySelectorAll("[data-skill]").forEach((c) => {
+              const okSearch = !q || c.dataset.hay.includes(q);
+              const okStatus =
+                !statusFilter || c.dataset.status === statusFilter;
+              const okDomain =
+                !domainFilter || c.dataset.domain === domainFilter;
+              const okLayer = !layerFilter || c.dataset.layer === layerFilter;
+              const okLink = !linkFilter || c.dataset.link === linkFilter;
+              const okSync = !syncFilter || c.dataset.sync === syncFilter;
+              const hit =
+                okSearch && okStatus && okDomain && okLayer && okLink && okSync;
+              c.hidden = !hit;
+              if (hit) vis = true;
+            });
+            sec.hidden = !vis;
+            if (vis) anyVisible = true;
           });
-          sec.hidden = !vis;
-          if (vis) anyVisible = true;
-        });
         const nr = $("#noresult");
         if (nr) {
-          nr.hidden = anyVisible || !q;
-          nr.textContent = q ? `No skills match "${q}".` : "";
+          const filtering =
+            q ||
+            statusFilter ||
+            domainFilter ||
+            layerFilter ||
+            linkFilter ||
+            syncFilter;
+          nr.hidden = anyVisible || !filtering;
+          nr.textContent = filtering ? "No skills match these filters." : "";
         }
       }
       async function renderSyncNote() {
@@ -2846,10 +3668,21 @@
         }
         const d = r.data;
         const summary = (state.skills || []).find((s) => s.name === name) || {};
-        const cat = humanCat(d.category);
-        const siblings = (state.skills || []).filter(
-          (s) => catOf(s) === (d.category === "." ? "." : d.category),
-        );
+        // Sibling rail follows the library: same taxonomy group as this skill
+        // (per the active Group by axis) and the active rail filters. The open
+        // skill itself always stays in the list.
+        const groupKey = groupAxis === "none" ? null : groupKeyOf(summary);
+        const cat =
+          groupAxis === "none" ? "All skills" : humanCat(groupKey || "");
+        const order = libraryOrder();
+        const siblings = (state.skills || [])
+          .filter(
+            (s) =>
+              s.name === name ||
+              (passesFilters(s) &&
+                (groupAxis === "none" || groupKeyOf(s) === groupKey)),
+          )
+          .sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
         const fileRow = (f, ind) => {
           const nm = f.path.slice(f.path.lastIndexOf("/") + 1);
           const sel = f.path === (currentFile || "SKILL.md") ? " sel" : "";
@@ -2961,7 +3794,7 @@
         currentFileData = r.data;
         const isMd = /\.(md|markdown)$/i.test(p) && r.data.kind === "text";
         $("#seg").classList.toggle("vhide", !isMd);
-        if (isMd) setMode("rendered");
+        if (isMd) setMode(viewMode);
         else renderPlain();
       }
       function setMode(m) {
@@ -3113,11 +3946,16 @@
               const rel = skill
                 ? file.slice(skill.rel.length + 1) || "SKILL.md"
                 : file;
+              const rowTitle = skill
+                ? skill.title
+                : file === "loom.json"
+                  ? "Vault settings"
+                  : file;
               const diffText = dmap[file];
               const body = diffText
                 ? `<pre class="plain">${colorDiff(diffText)}</pre>`
                 : `<pre class="plain"><span class="dmeta">${word === "New" ? "new file — content not yet tracked" : word.toLowerCase()}</span></pre>`;
-              return `<details class="crow"><summary><span class="skname">${esc(skill ? skill.title : file)}</span><span class="badge ${STATUS_CLS[word] || "off"}">${esc(word)}</span><span class="path">${esc(rel)}</span><span class="chev">›</span></summary><div class="diff">${body}</div></details>`;
+              return `<details class="crow"><summary><span class="skname">${esc(rowTitle)}</span><span class="badge ${STATUS_CLS[word] || "off"}">${esc(word)}</span><span class="path">${esc(rel)}</span><span class="chev">›</span></summary><div class="diff">${body}</div></details>`;
             })
             .join("");
           changesHtml = `<div class="clist">${rows}</div>`;
@@ -3135,18 +3973,36 @@
                 );
                 const st = cell ? cell.state : "?";
                 const cls =
-                  st === "linked" ? "" : st === "missing" ? "off" : "bad";
+                  st === "linked" ? "ok" : st === "missing" ? "off" : "bad";
                 const word =
                   st === "linked"
                     ? "linked"
                     : st === "missing"
                       ? "not linked"
-                      : st;
-                return `<td class="cst ${cls}">${esc(word)}</td>`;
+                      : st === "foreign"
+                        ? "conflict"
+                        : st;
+                return `<td class="cst"><span class="badge ${cls}">${esc(word)}</span></td>`;
               })
               .join("") +
             `<td class="awhen">${esc(fmtWhen(s.modified))}</td></tr>`;
         }
+
+        // taxonomy health
+        const statusCounts = {};
+        for (const s of state.skills) {
+          const k = s.status || "active";
+          statusCounts[k] = (statusCounts[k] || 0) + 1;
+        }
+        const untagged = state.skills.filter((s) => !s.domain || !s.layer);
+        const statusRows = Object.keys(statusCounts)
+          .sort()
+          .map(
+            (k) =>
+              `<tr><td class="mono">${esc(k)}</td><td class="awhen">${statusCounts[k]} skill${statusCounts[k] === 1 ? "" : "s"}</td></tr>`,
+          )
+          .join("");
+        const taxHtml = `<section class="coverage"><div class="covhead"><h2>Taxonomy</h2><span class="cnt">${state.skills.length} skills · by lifecycle status</span></div><table class="grid"><tr><th>Status</th><th>Count</th></tr>${statusRows}</table>${untagged.length ? `<div class="taxmiss"><span class="badge warn">Missing taxonomy</span> ${untagged.length} skill${untagged.length === 1 ? "" : "s"} without domain or layer: ${untagged.map((s) => `<span class="mono">${esc(s.name)}</span>`).join(", ")}</div>` : ""}</section>`;
 
         // rail verdict
         let verdict,
@@ -3197,6 +4053,21 @@
           if (sync.behind) parts.push(`<b>${sync.behind} behind</b>`);
           machines = `<p class="rline">Vault is ${parts.join(" and ")} of your other machines.</p>`;
         }
+        // Remote visibility: the actual commits waiting on each side.
+        const commitList = (label, items) =>
+          items && items.length
+            ? `<p class="rh" style="margin-top:12px">${label}</p>` +
+              items
+                .slice(0, 5)
+                .map((t) => `<p class="rmeta">· ${esc(t)}</p>`)
+                .join("") +
+              (items.length > 5
+                ? `<p class="rmeta">… and ${items.length - 5} more</p>`
+                : "")
+            : "";
+        machines +=
+          commitList("Incoming from the remote", sync.incoming) +
+          commitList("Not yet pushed", sync.outgoing);
 
         const canSave = diffR.versioned && (fileCount > 0 || sync.ahead > 0);
         setFixed(true);
@@ -3205,7 +4076,8 @@
             <div class="rvhead"><h1>Unsaved changes</h1><span class="count">${fileCount ? `${fileCount} file${fileCount === 1 ? "" : "s"}` : "nothing pending"}</span><span class="spacer"></span>${canSave ? `<button class="btn primary" id="savesync">Save &amp; sync</button>` : ""}</div>
             <p class="rvsub">Edits your agents made since the last save. Review, then save them to the vault and push to your other machines.</p>
             ${changesHtml}
-            <section class="coverage"><div class="covhead"><h2>Runtime coverage</h2><span class="cnt">${state.skills.length} skills · ${consumers.map(cap).join(" & ")}</span></div><table class="grid">${cov}</table></section>
+            <section class="coverage"><div class="covhead"><h2>Runtime coverage</h2><span class="cnt">${state.skills.length} skills · ${consumers.map(cap).join(" & ")}</span></div><p class="covlegend"><b>linked</b> symlink to the vault · <b>not linked</b> nothing installed at the runtime path · <b>conflict</b> something that is not the vault's link owns that path; skill-loom never overwrites it</p><table class="grid">${cov}</table></section>
+            ${taxHtml}
           </main>
           <aside class="statusrail">
             <div class="rblock"><p class="rh">Vault health</p>${verdict}<div class="vsupport">${vitems}</div></div>
@@ -3215,6 +4087,7 @@
         </div>`;
         if ($("#savesync"))
           $("#savesync").addEventListener("click", doSaveSync);
+        refreshStatusSyncLive();
         if ($("#fixlinks"))
           $("#fixlinks").addEventListener("click", () => doLink(true));
       }
@@ -3230,6 +4103,58 @@
         toast(wet.data.message || wet.data.error || "done");
         await loadState();
         go("status");
+      }
+      async function doPresetAdd(name, p) {
+        const r = await api("/api/consumers", { name, path: p });
+        toast(
+          r.ok
+            ? `${cap(name)} added. Use Fix links or link --apply to populate it.`
+            : r.data.error || "failed",
+        );
+        await loadState();
+      }
+      async function doRuntimeAdd() {
+        const name = await promptDialog(
+          'Runtime name (lowercase, e.g. "cursor"):',
+          "",
+          "Next",
+        );
+        if (!name) return;
+        const p = await promptDialog(
+          `Skills folder for "${name.trim().toLowerCase()}" (e.g. ~/.cursor/skills):`,
+          "",
+          "Add",
+        );
+        if (!p) return;
+        const r = await api("/api/consumers", {
+          name: name.trim().toLowerCase(),
+          path: p.trim(),
+        });
+        toast(
+          r.ok
+            ? "Runtime added. Use Fix links or link --apply to populate it."
+            : r.data.error || "failed",
+        );
+        await loadState();
+      }
+      async function doNameAdd() {
+        const word = await promptDialog(
+          'Word to re-case (one kebab segment, e.g. "forpros"):',
+          "",
+          "Next",
+        );
+        if (!word) return;
+        const w = word.trim().toLowerCase();
+        const cased = await promptDialog(`Show "${w}" as:`, "", "Save");
+        if (!cased) return;
+        const r = await api("/api/names", { word: w, cased: cased.trim() });
+        toast(r.ok ? "Saved." : r.data.error || "failed");
+        await loadState();
+      }
+      async function doNameDel(word) {
+        const r = await api("/api/names", { word, remove: true });
+        toast(r.ok ? "Removed." : r.data.error || "failed");
+        await loadState();
       }
       async function doLink(apply) {
         const dry = await api("/api/link", { apply: false });
@@ -3331,7 +4256,12 @@
       /* ---------- settings ---------- */
       function renderSettings() {
         setFixed(false);
-        const consumers = Object.entries(state.consumers);
+        const consumers = Object.entries(state.consumers).sort((a, b) =>
+          a[0].localeCompare(b[0]),
+        );
+        const presets = [...(state.presets || [])].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        );
         const versioned = sync && sync.versioned;
         app().innerHTML = `<div class="setwrap">
           <button class="crumb" data-go="skills">← Your library</button>
@@ -3343,8 +4273,42 @@
           </div>
           <div class="group">
             <div class="grouphead"><h2>Runtimes</h2><p>Where skill-loom symlinks your skills. Turn one off to stop linking into it.</p></div>
-            ${consumers.map(([name, p]) => `<div class="srow"><div><div class="lbl">${esc(cap(name))}</div><div class="subv"><span class="path">${esc(p)}</span></div></div><div class="val"><button class="switch on" data-consumer="${esc(name)}" title="Linking active"></button></div></div>`).join("")}
-            <div class="addrow"><button class="btn" data-coming="Adding a runtime">+ Add a runtime</button></div>
+            ${consumers
+              .map(([name, p]) => {
+                const links = (state.matrix || []).filter(
+                  (m) => m.consumer === name,
+                );
+                const linked = links.filter((m) => m.state === "linked").length;
+                // on = fully linked; a partial runtime reads as off, and the
+                // next click links the missing skills instead of tearing
+                // everything down.
+                const full = links.length > 0 && linked === links.length;
+                const hint = full
+                  ? ""
+                  : linked > 0
+                    ? " — turn on to link the rest"
+                    : "";
+                return `<div class="srow"><div><div class="lbl">${esc(cap(name))}</div><div class="subv"><span class="path">${esc(p)}</span></div></div><div class="val"><button class="switch${full ? " on" : ""}" data-consumer="${esc(name)}" title="${linked} of ${links.length} skills linked${hint}"></button></div></div>`;
+              })
+              .join("")}
+            ${presets
+              .map(
+                (pr) =>
+                  `<div class="srow"><div><div class="lbl">${esc(cap(pr.name))} <span class="badge off" style="margin-left:6px">detected</span></div><div class="subv"><span class="path">${esc(pr.path)}</span></div></div><div class="val"><button class="btn" data-runtimepreset="${esc(pr.name)}" data-path="${esc(pr.path)}">Add</button></div></div>`,
+              )
+              .join("")}
+            <div class="addrow"><button class="btn" data-runtimeadd="1">+ Add a runtime</button></div>
+          </div>
+          <div class="group">
+            <div class="grouphead"><h2>Naming</h2><p>Custom word casing for titles and labels, stored in loom.json. Overrides the built-in acronym and brand dictionaries.</p></div>
+            ${Object.entries(state.customNames || {})
+              .sort((a, b) => a[0].localeCompare(b[0]))
+              .map(
+                ([w, c]) =>
+                  `<div class="srow"><div><div class="lbl"><span class="path">${esc(w)}</span></div><div class="subv">shown as <b>${esc(c)}</b></div></div><div class="val"><button class="btn" data-namedel="${esc(w)}">Remove</button></div></div>`,
+              )
+              .join("")}
+            <div class="addrow"><button class="btn" data-nameadd="1">+ Add a word</button></div>
           </div>
           <div class="group">
             <div class="grouphead"><h2>Sync</h2><p>Push the vault to a private git remote to use it on more than one machine.</p></div>
@@ -3940,7 +4904,7 @@
         const t =
           e.target instanceof Element
             ? e.target.closest(
-                "[data-go],[data-skill],[data-file],[data-mode],[data-hash-open],[data-toggle],[data-consumer],[data-restore],[data-remote],[data-coming]",
+                "[data-go],[data-skill],[data-file],[data-mode],[data-hash-open],[data-toggle],[data-consumer],[data-restore],[data-remote],[data-coming],[data-nameadd],[data-namedel],[data-runtimeadd],[data-runtimepreset]",
               )
             : null;
         if (!t) {
@@ -3961,6 +4925,11 @@
         else if (t.dataset.consumer) toggleConsumer(t.dataset.consumer, t);
         else if (t.dataset.restore) doRestore(t.dataset.restore);
         else if (t.dataset.remote) doRemote();
+        else if (t.dataset.runtimeadd) doRuntimeAdd();
+        else if (t.dataset.runtimepreset)
+          doPresetAdd(t.dataset.runtimepreset, t.dataset.path);
+        else if (t.dataset.nameadd) doNameAdd();
+        else if (t.dataset.namedel) doNameDel(t.dataset.namedel);
         else if (t.dataset.coming) comingSoon(t.dataset.coming);
       });
       // ── Keyboard shortcuts + help overlay ────────────────────────────────
@@ -3972,6 +4941,7 @@
         ["← ↑ ↓ →", "Select a skill (library) · navigate (detail)"],
         ["↵ Enter", "Open selected skill (library)"],
         ["v", "Toggle Rendered / Source"],
+        ["g", "Toggle grid / list (library)"],
         ["e", "Rename skill"],
         ["r", "Refresh from the vault"],
         ["Esc", "Back · close · clear search"],
@@ -4035,6 +5005,15 @@
         }
         if (curView === "skills") {
           if (e.key === "n") return void go("new");
+          if (e.key === "g") {
+            e.preventDefault();
+            libView = libView === "grid" ? "list" : "grid";
+            if (libView === "grid" && sortMode === "updated") {
+              sortMode = "name";
+              sortDir = 1;
+            }
+            return void renderLibrary();
+          }
           if (e.key.startsWith("Arrow")) {
             e.preventDefault();
             return libNav(e.key);
@@ -4128,9 +5107,11 @@
       $("#refresh").addEventListener("click", () => loadState());
       $("#help-btn")?.addEventListener("click", openHelp);
 
+      let lastStateAt = 0;
       async function loadState() {
         const r = await api("/api/state");
         if (!r.ok) return toast(r.data.error || "failed to load state");
+        lastStateAt = Date.now();
         state = r.data;
         $("#vault").textContent =
           `${state.vaultDir.replace(/^.*\//, "~/")} · ${state.skills.length} skills`;
@@ -4141,7 +5122,45 @@
           return;
         }
         render();
+        refreshSyncLive();
       }
+      // Once per boot, refresh the sync counters against the LIVE remote
+      // (git fetch) so "to pull" reflects GitHub, not the last fetch. Runs
+      // after the first paint; re-renders the library only if the numbers
+      // changed (the banner appears or updates).
+      // Status re-checks against the live remote each time it opens: paint
+      // with cached counters, then re-render once if the fetch changed them.
+      let statusSyncStamp = 0;
+      async function refreshStatusSyncLive() {
+        const stamp = ++statusSyncStamp;
+        const r = await api("/api/sync?fetch=1");
+        if (!r.ok || stamp !== statusSyncStamp) return;
+        const changed = JSON.stringify(r.data) !== JSON.stringify(sync);
+        sync = r.data;
+        // Counters moved: the per-skill state (matrix, sync column) is stale
+        // too, so reload everything, not just this pane.
+        if (changed && curView === "status") loadState();
+      }
+      let syncLiveDone = false;
+      async function refreshSyncLive() {
+        if (syncLiveDone) return;
+        syncLiveDone = true;
+        const before = JSON.stringify([sync?.dirty, sync?.ahead, sync?.behind]);
+        const r = await api("/api/sync?fetch=1");
+        if (!r.ok) return;
+        sync = r.data;
+        const after = JSON.stringify([sync.dirty, sync.ahead, sync.behind]);
+        // Counters moved since the page painted: the per-skill Sync column is
+        // built from /api/state, so a banner-only refresh would disagree with
+        // the table. Reload the whole state instead.
+        if (before !== after) loadState();
+      }
+      // Agents edit the vault while the tab sits in the background: on return,
+      // revalidate a stale snapshot so banner, table and Status agree.
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && lastStateAt && Date.now() - lastStateAt > 60000)
+          loadState();
+      });
       loadState();
     </script>
   </body>
