@@ -1,6 +1,6 @@
 {
   "name": "skill-loom",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "One canonical, git-versioned vault of agent skills, symlinked into every runtime (Claude Code, Codex, custom).",
   "type": "module",
   "bin": {
@@ -15,7 +15,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc && cp src/ui.html dist/src/ui.html",
+    "build": "tsc && cp src/ui.html src/ui.css src/ui.js dist/src/",
     "test": "npm run build && node --test 'dist/test/**/*.test.js'",
     "prepublishOnly": "npm test"
   },
