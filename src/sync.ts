@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
 import type { OpOutcome } from "./ops.js";
+import { collectDoctor } from "./gate.js";
 
 export interface SyncStatus {
   versioned: boolean;
@@ -127,7 +128,11 @@ export function syncFiles(vaultDir: string): SyncFiles {
   };
 }
 
-export function syncOp(vaultDir: string, apply: boolean): OpOutcome {
+export function syncOp(
+  vaultDir: string,
+  apply: boolean,
+  force = false,
+): OpOutcome {
   const repo = vaultRepo(vaultDir);
   if (repo.inside && !repo.isRoot) {
     return {
@@ -145,12 +150,55 @@ export function syncOp(vaultDir: string, apply: boolean): OpOutcome {
       actions: [],
     };
   }
+  // Run the vault's own rules before writing a commit. Save & sync commits with
+  // --no-verify (to dodge a slow/hostile pre-commit hook), which would otherwise
+  // also skip a doctor gate wired as that hook — so the tool enforces it here,
+  // hook-independent. `force` is the explicit "commit anyway" escape hatch.
+  if (st.dirty > 0 && !force) {
+    const rep = collectDoctor(vaultDir);
+    if (rep.count > 0) {
+      return {
+        status: 1,
+        message: `${rep.count} rule problem(s) block this save — fix them, or commit anyway`,
+        actions: rep.blocking,
+        gate: rep.blocking,
+      };
+    }
+  }
   if (!st.remote) {
+    // No remote is not an error: version locally so the vault still gets a
+    // checkpoint. Syncing to other machines waits until a remote is added.
+    if (st.dirty === 0)
+      return {
+        status: 0,
+        message: "nothing to save — the vault is up to date",
+        actions: [],
+      };
+    const localActions = [`commit ${st.dirty} changed file(s) locally`];
+    if (!apply)
+      return {
+        status: 0,
+        message: "dry-run — nothing changed",
+        actions: localActions,
+      };
+    git(vaultDir, "add", "-A");
+    const c = git(
+      vaultDir,
+      "commit",
+      "-m",
+      `loom: save from ${hostname()}`,
+      "--no-verify",
+    );
+    if (c.status !== 0)
+      return {
+        status: 1,
+        message: `commit failed: ${(c.stderr || c.stdout).trim()}`,
+        actions: localActions,
+      };
     return {
-      status: 2,
-      message:
-        'no git remote configured — run "git remote add origin <url>" in the vault first',
-      actions: [],
+      status: 0,
+      message: `saved ${st.dirty} file(s) locally — add a remote to sync to your other machines`,
+      actions: localActions,
     };
   }
   const actions: string[] = [];

@@ -30,7 +30,6 @@ export function makeConfig(
     schema: 1,
     consumers,
     ignore: [...DEFAULT_IGNORE],
-    archived: [],
     names: {},
   };
   saveConfig(vaultDir, cfg);

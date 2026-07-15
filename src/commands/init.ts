@@ -41,7 +41,6 @@ export function runInit(vaultDir: string): number {
     schema: 1,
     consumers,
     ignore: [...DEFAULT_IGNORE],
-    archived: [],
     names: {},
   };
   saveConfig(vaultDir, cfg);
@@ -53,11 +52,111 @@ export function runInit(vaultDir: string): number {
   // never operates on the parent and lists unrelated files.
   const gitignore = path.join(vaultDir, ".gitignore");
   if (!existsSync(gitignore)) {
+    // `sync --apply` does `git add -A`, so anything a tool-skill drops into the
+    // vault (a .env, a *.sqlite, a credentials/ dir) would be committed and
+    // pushed unless ignored here — git never reads loom.json's ignore list.
     writeFileSync(
       gitignore,
-      ".rt/\nnode_modules/\n__pycache__/\n.venv/\n.DS_Store\n",
+      [
+        "# Secrets & local state — the vault is committed and pushed.",
+        ".env",
+        ".env.*",
+        "credentials/",
+        "*.sqlite",
+        "*.sqlite-*",
+        "",
+        "# Build artifacts & caches",
+        ".rt/",
+        "node_modules/",
+        "__pycache__/",
+        "*.pyc",
+        ".venv/",
+        "",
+        "# Editor / OS noise",
+        ".DS_Store",
+        ".vscode/",
+        ".idea/",
+        "",
+      ].join("\n"),
     );
   }
+
+  // A starter CONVENTIONS.md so a fresh vault documents how its skills are
+  // structured — the rules the dashboard surfaces and the loom.json `lint`
+  // block enforces. Edit freely; skill-loom never rewrites it.
+  const conventions = path.join(vaultDir, "CONVENTIONS.md");
+  if (!existsSync(conventions)) {
+    writeFileSync(
+      conventions,
+      [
+        "# Vault conventions",
+        "",
+        "How skills in this vault are structured. Edit this to fit your project —",
+        "the `lint` block in `loom.json` can turn the mechanical parts into checks",
+        "(`skill-loom doctor`).",
+        "",
+        "## Structure",
+        "",
+        "- One folder per skill; the folder name **is** the skill name.",
+        "- Each skill has a `SKILL.md` whose frontmatter `name:` and H1 both equal",
+        "  the folder name.",
+        "- Long material goes in `references/`, one file per topic, loaded on demand.",
+        "",
+        "## Frontmatter taxonomy",
+        "",
+        "- `domain` — who the skill belongs to (a brand, a project, `cross`).",
+        "- `layer` — what kind of work it does (e.g. `tool`, `engine`, `review`).",
+        "- `status` — `active` (default) or `suspended`.",
+        "",
+        "## Naming",
+        "",
+        "- Folders and files: lowercase-kebab-case.",
+        "- `description` is trigger-first and concise — it is what agents read to",
+        "  decide when to use the skill.",
+        "",
+        "## Enforcement",
+        "",
+        "The `lint` block in `loom.json` turns these into checks. Set",
+        '`"strict": true` to fail on violations in CI or a pre-commit hook.',
+        "",
+      ].join("\n"),
+    );
+  }
+  // A starter source-registry.yaml so the Rules view has the second governance
+  // doc from the first run, and the format is self-documenting. Optional: it
+  // only earns its keep when several skills point at the same relocatable
+  // location (a data dir, another repo) via `metadata.sources`. Delete it when
+  // skills are self-contained.
+  const registry = path.join(vaultDir, "source-registry.yaml");
+  if (!existsSync(registry)) {
+    writeFileSync(
+      registry,
+      [
+        "# Source registry (optional).",
+        "# One place for shared, relocatable locations several skills point at",
+        "# (a data directory, another repo, an external system). A skill names a",
+        "# source id in its frontmatter (metadata.sources); the path lives here, so",
+        "# moving it is a one-line edit here, not an edit in every skill.",
+        "# Delete this file if your skills are self-contained.",
+        "#",
+        "# stability: canonical | collection | volatile | external | historical",
+        "",
+        "roots: {}",
+        "# roots:",
+        "#   project:",
+        "#     path: ../my-project",
+        "",
+        "sources: {}",
+        "# sources:",
+        "#   design-tokens:",
+        "#     root: project",
+        "#     locator: packages/tokens",
+        "#     stability: canonical",
+        "",
+      ].join("\n"),
+    );
+  }
+
   let isRoot = false;
   const top = spawnSync(
     "git",
@@ -82,6 +181,35 @@ export function runInit(vaultDir: string): number {
         ? "initialized a git repo in the vault"
         : 'could not run "git init" — do it manually in the vault',
     );
+  }
+
+  // Commit the scaffold so a fresh vault opens clean instead of showing its own
+  // config files as "unsaved changes". Only when the vault is now the root of
+  // its OWN repo — never commit into a parent repo (git init above reroots a
+  // nested dir, so the success path is safe; guard the failure path). --no-verify
+  // skips any hook inherited from an enclosing config.
+  const rootOut = spawnSync(
+    "git",
+    ["-C", vaultDir, "rev-parse", "--show-toplevel"],
+    { encoding: "utf8" },
+  );
+  let ownRepo = false;
+  if (rootOut.status === 0) {
+    try {
+      ownRepo = realpathSync(rootOut.stdout.trim()) === realpathSync(vaultDir);
+    } catch {
+      ownRepo = false;
+    }
+  }
+  if (ownRepo) {
+    spawnSync("git", ["-C", vaultDir, "add", "-A"], { encoding: "utf8" });
+    const commit = spawnSync(
+      "git",
+      ["-C", vaultDir, "commit", "-m", "loom: initialize vault", "--no-verify"],
+      { encoding: "utf8" },
+    );
+    if (commit.status === 0)
+      console.log("committed the initial vault scaffold");
   }
 
   console.log(`initialized vault in ${vaultDir}`);

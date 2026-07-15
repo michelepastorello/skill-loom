@@ -8,12 +8,15 @@ import {
   createUiServer,
   humanizeName,
   aggregateHealth,
+  buildState,
 } from "../src/server.js";
 import { makeTmp, makeSkill, makeConfig } from "./helpers.js";
+import { saveConfig, DEFAULT_IGNORE } from "../src/config.js";
 import { spawnSync } from "node:child_process";
 import {
   symlinkSync as symlinkSync2,
   writeFileSync as writeFileSync2,
+  readFileSync as readFileSync2,
 } from "node:fs";
 
 async function start(
@@ -31,6 +34,91 @@ function uiVault() {
   makeConfig(vault, { claude: consumerDir });
   return { vault, consumerDir };
 }
+
+test("POST /api/inplace-toggle activates an in-place consumer by editing its config", async () => {
+  const vault = makeTmp();
+  const rtFile = path.join(makeTmp(), "rt.json");
+  writeFileSync2(
+    rtFile,
+    JSON.stringify({ skills: { load: { extraDirs: [] } } }, null, 2) + "\n",
+  );
+  saveConfig(vault, {
+    schema: 1,
+    consumers: {
+      rt: {
+        mode: "in-place",
+        servedVia: { file: rtFile, jsonPath: "skills.load.extraDirs" },
+      },
+    },
+    ignore: [...DEFAULT_IGNORE],
+    names: {},
+  });
+  makeSkill(vault, "cat", "alpha");
+  const { server, base } = await start(vault);
+
+  // inactive at first → the coverage state is "missing", not "served"
+  const s0 = (await (await fetch(`${base}/api/state`)).json()) as {
+    matrix: { consumer: string; state: string }[];
+  };
+  assert.equal(s0.matrix.find((m) => m.consumer === "rt")?.state, "missing");
+
+  // dry-run lists the action, changes nothing
+  const dry = await (
+    await postJson(base, "/api/inplace-toggle", {
+      consumer: "rt",
+      on: true,
+      apply: false,
+    })
+  ).json();
+  assert.equal(dry.applied, false);
+  assert.ok(dry.actions.length > 0);
+
+  // apply → the vault lands in the runtime's array; coverage flips to served
+  const on = await (
+    await postJson(base, "/api/inplace-toggle", {
+      consumer: "rt",
+      on: true,
+      apply: true,
+    })
+  ).json();
+  assert.equal(on.applied, true);
+  assert.deepEqual(
+    JSON.parse(readFileSync2(rtFile, "utf8")).skills.load.extraDirs,
+    [path.resolve(vault)],
+  );
+  const s1 = (await (await fetch(`${base}/api/state`)).json()) as {
+    matrix: { consumer: string; state: string }[];
+  };
+  assert.equal(s1.matrix.find((m) => m.consumer === "rt")?.state, "served");
+
+  // a non-in-place (or unknown) consumer is refused
+  const bad = await postJson(base, "/api/inplace-toggle", {
+    consumer: "ghost",
+    on: true,
+    apply: true,
+  });
+  assert.equal(bad.status, 400);
+  server.close();
+});
+
+test("GET /api/doc serves a vault-root doc and blocks anything else", async () => {
+  const { vault } = uiVault();
+  writeFileSync2(path.join(vault, "CONVENTIONS.md"), "# Rules\n\nbody\n");
+  const { server, base } = await start(vault);
+
+  const ok = await fetch(`${base}/api/doc?name=CONVENTIONS.md`);
+  assert.equal(ok.status, 200);
+  const body = (await ok.json()) as { content: string; kind: string };
+  assert.match(body.content, /# Rules/);
+
+  // not an allowed governance doc
+  assert.equal((await fetch(`${base}/api/doc?name=loom.json`)).status, 400);
+  // path traversal
+  assert.equal((await fetch(`${base}/api/doc?name=../secret`)).status, 400);
+  // allowed name but absent
+  assert.equal((await fetch(`${base}/api/doc?name=README.md`)).status, 404);
+  server.close();
+});
 
 test("GET /api/state returns skills, matrix and problems", async () => {
   const { vault } = uiVault();
@@ -151,25 +239,7 @@ test("POST with non-JSON content-type is rejected with 400", async () => {
   server.close();
 });
 
-test("POST /api/add with a path-escaping category returns 400 and writes nothing outside the vault", async () => {
-  const { vault } = uiVault();
-  const { server, base } = await start(vault);
-  const outside = path.join(path.dirname(path.dirname(vault)), "outside");
-  const res = await fetch(`${base}/api/add`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      name: "evil",
-      category: "../../outside",
-      apply: true,
-    }),
-  });
-  assert.equal(res.status, 400);
-  assert.ok(!existsSync(outside));
-  server.close();
-});
-
-test("POST /api/add: dry-run untouched, apply scaffolds, invalid name 400", async () => {
+test("POST /api/add: dry-run untouched, apply scaffolds at root, invalid name 400", async () => {
   const { vault } = uiVault();
   const { server, base } = await start(vault);
   const post = (body: object) =>
@@ -180,20 +250,18 @@ test("POST /api/add: dry-run untouched, apply scaffolds, invalid name 400", asyn
     });
   const dry = await post({
     name: "demo",
-    category: "cat",
     description: "From the UI",
     apply: false,
   });
   assert.equal(dry.status, 200);
-  assert.ok(!existsSync(path.join(vault, "cat", "demo")));
+  assert.ok(!existsSync(path.join(vault, "demo")));
   const wet = await post({
     name: "demo",
-    category: "cat",
     description: "From the UI",
     apply: true,
   });
   assert.equal(wet.status, 200);
-  assert.ok(existsSync(path.join(vault, "cat", "demo", "SKILL.md")));
+  assert.ok(existsSync(path.join(vault, "demo", "SKILL.md")));
   const bad = await post({ name: "Bad_Name", apply: true });
   assert.equal(bad.status, 400);
   server.close();
@@ -224,7 +292,7 @@ test("POST /api/archive and /api/migrate: dry-run then apply", async () => {
     apply: true,
   });
   assert.equal(aWet.status, 200);
-  assert.ok(existsSync(path.join(vault, "archive", "alpha", "SKILL.md")));
+  assert.ok(existsSync(path.join(vault, ".archive", "alpha", "SKILL.md")));
 
   const mDry = await post("/api/migrate", {
     old: "beta",
@@ -389,6 +457,57 @@ test("humanizeName and aggregateHealth follow the spec mapping", () => {
   assert.equal(aggregateHealth(["linked", "missing"]), "attention");
   assert.equal(aggregateHealth(["missing"]), "inactive");
   assert.equal(aggregateHealth([]), "inactive");
+  // "served" (in-place) counts as healthy, like "linked"
+  assert.equal(aggregateHealth(["served"]), "active");
+  assert.equal(aggregateHealth(["linked", "served"]), "active");
+  assert.equal(aggregateHealth(["served", "foreign"]), "attention");
+});
+
+test("archived skills come from the archive/ folder and are browsable", async () => {
+  const vault = makeTmp();
+  makeConfig(vault, {});
+  makeSkill(vault, "cat", "active-one");
+  // in archive/ but NOT recorded in loom.json's archived list
+  makeSkill(vault, ".archive", "retired-one");
+
+  const state = buildState(vault) as { archived: { name: string }[] };
+  assert.deepEqual(
+    state.archived.map((a) => a.name),
+    ["retired-one"],
+  );
+
+  const { server, base } = await start(vault);
+  const d = (await (
+    await fetch(`${base}/api/skill?name=retired-one`)
+  ).json()) as { archived: boolean; states: unknown[] };
+  assert.equal(d.archived, true);
+  assert.deepEqual(d.states, []); // archived → no live runtime links
+  server.close();
+});
+
+test("buildState lists vault-root governance docs that exist", () => {
+  const vault = makeTmp();
+  makeConfig(vault, {});
+  writeFileSync2(path.join(vault, "CONVENTIONS.md"), "# Rules\n");
+  writeFileSync2(path.join(vault, "source-registry.yaml"), "roots: {}\n");
+  const state = buildState(vault) as { docs: { name: string }[] };
+  const names = state.docs.map((d) => d.name);
+  assert.ok(names.includes("CONVENTIONS.md"));
+  assert.ok(names.includes("source-registry.yaml"));
+  assert.ok(!names.includes("README.md")); // absent → not listed
+});
+
+test("buildState surfaces hygiene warnings from the vault", () => {
+  const vault = makeTmp();
+  makeConfig(vault, {});
+  const dir = makeSkill(vault, "cat", "alpha");
+  // H1 drifts from the name → an h1-mismatch hygiene warning
+  writeFileSync2(
+    path.join(dir, "SKILL.md"),
+    "---\nname: alpha\ndescription: d\n---\n\n# Not Alpha\n",
+  );
+  const state = buildState(vault) as { warnings: { kind: string }[] };
+  assert.ok(state.warnings.some((w) => w.kind === "h1-mismatch"));
 });
 
 test("state skills carry title and health; GET/POST /api/sync work", async () => {
@@ -466,7 +585,7 @@ test("POST /api/restore brings back an archived skill", async () => {
     reason: "x",
     apply: true,
   });
-  assert.ok(existsSync(path.join(vault, "archive", "demo")));
+  assert.ok(existsSync(path.join(vault, ".archive", "demo")));
   const wet = await postJson(base, "/api/restore", {
     name: "demo",
     apply: true,
@@ -489,5 +608,175 @@ test("POST /api/remote sets origin on a git vault", async () => {
     encoding: "utf8",
   });
   assert.match(url.stdout, /example\.com\/x\.git/);
+  server.close();
+});
+
+test("POST /api/rules dry-run returns impact without writing", async () => {
+  const vault = makeTmp();
+  saveConfig(vault, {
+    schema: 1,
+    consumers: {},
+    ignore: [...DEFAULT_IGNORE],
+    names: {},
+    lint: { descriptionMinChars: 3 },
+  });
+  const dir = path.join(vault, "s1");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync2(
+    path.join(dir, "SKILL.md"),
+    `---\nname: s1\ndescription: hey\n---\n\n# s1\n`,
+  );
+  const { server, base } = await start(vault);
+  const r = (await (
+    await fetch(`${base}/api/rules`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lint: { descriptionMinChars: 10 }, apply: false }),
+    })
+  ).json()) as { ok: boolean; impact: { newlyFlagged: { name: string }[] } };
+  server.close();
+  assert.equal(r.ok, true);
+  assert.equal(r.impact.newlyFlagged[0].name, "s1");
+  const saved = JSON.parse(
+    readFileSync2(path.join(vault, "loom.json"), "utf8"),
+  );
+  assert.equal(saved.lint.descriptionMinChars, 3); // unchanged
+});
+
+test("POST /api/rules apply writes the lint block", async () => {
+  const vault = makeTmp();
+  saveConfig(vault, {
+    schema: 1,
+    consumers: {},
+    ignore: [...DEFAULT_IGNORE],
+    names: {},
+    lint: { descriptionMinChars: 3 },
+  });
+  const { server, base } = await start(vault);
+  const r = (await (
+    await fetch(`${base}/api/rules`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lint: { descriptionMinChars: 42 }, apply: true }),
+    })
+  ).json()) as { ok: boolean };
+  server.close();
+  assert.equal(r.ok, true);
+  const saved = JSON.parse(
+    readFileSync2(path.join(vault, "loom.json"), "utf8"),
+  );
+  assert.equal(saved.lint.descriptionMinChars, 42);
+});
+
+test("POST /api/rules rejects an invalid regex", async () => {
+  const vault = makeTmp();
+  saveConfig(vault, {
+    schema: 1,
+    consumers: {},
+    ignore: [...DEFAULT_IGNORE],
+    names: {},
+  });
+  const { server, base } = await start(vault);
+  const res = await fetch(`${base}/api/rules`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      lint: { forbidBodyPatterns: ["[bad"] },
+      apply: true,
+    }),
+  });
+  assert.equal(res.status, 400);
+  const body = (await res.json()) as { error?: string };
+  assert.ok(body.error);
+  server.close();
+});
+
+test("GET /api/loom-json returns the raw config file", async () => {
+  const vault = makeTmp();
+  saveConfig(vault, {
+    schema: 1,
+    consumers: {},
+    ignore: [...DEFAULT_IGNORE],
+    names: {},
+  });
+  const { server, base } = await start(vault);
+  const r = (await (await fetch(`${base}/api/loom-json`)).json()) as {
+    content: string;
+  };
+  server.close();
+  assert.match(r.content, /"schema"/);
+});
+
+test("POST /api/bulk/status promotes many and links them; 400 on empty names", async () => {
+  const vault = makeTmp();
+  const consumerDir = path.join(makeTmp(), "skills");
+  mkdirSync(consumerDir, { recursive: true });
+  makeConfig(vault, { claude: consumerDir });
+  const mk = (name: string, status: string) => {
+    const d = path.join(vault, name);
+    mkdirSync(d, { recursive: true });
+    writeFileSync2(
+      path.join(d, "SKILL.md"),
+      `---\nname: ${name}\ndescription: x\nstatus: ${status}\n---\n\n# ${name}\n`,
+    );
+  };
+  mk("a", "draft");
+  mk("b", "draft");
+  const { server, base } = await start(vault);
+
+  const dry = await (
+    await postJson(base, "/api/bulk/status", {
+      names: ["a", "b"],
+      status: "active",
+      apply: false,
+    })
+  ).json();
+  assert.equal(dry.applied, false);
+  assert.ok(dry.actions.length >= 2);
+
+  const wet = await (
+    await postJson(base, "/api/bulk/status", {
+      names: ["a", "b"],
+      status: "active",
+      apply: true,
+    })
+  ).json();
+  assert.equal(wet.applied, true);
+  assert.ok(lstatSync(path.join(consumerDir, "a")).isSymbolicLink());
+  assert.ok(lstatSync(path.join(consumerDir, "b")).isSymbolicLink());
+
+  const bad = await postJson(base, "/api/bulk/status", {
+    names: [],
+    status: "active",
+    apply: true,
+  });
+  assert.equal(bad.status, 400);
+  server.close();
+});
+
+test("POST /api/bulk/rename applies a prefix transform", async () => {
+  const { vault } = uiVault();
+  makeSkill(vault, "biz", "one");
+  makeSkill(vault, "biz", "two");
+  const { server, base } = await start(vault);
+  const wet = await (
+    await postJson(base, "/api/bulk/rename", {
+      names: ["one", "two"],
+      transform: { op: "add-prefix", value: "x-" },
+      apply: true,
+    })
+  ).json();
+  assert.equal(wet.applied, true);
+  // migrateOp renames a skill in place, keeping its category folder ("biz/"),
+  // matching the existing /api/migrate test (cat/gamma). The brief asserted a
+  // vault-root path, which cannot hold against the shipped bulkRenameOp.
+  assert.ok(existsSync(path.join(vault, "biz", "x-one", "SKILL.md")));
+  // invalid transform is refused at the route
+  const bad = await postJson(base, "/api/bulk/rename", {
+    names: ["x-one"],
+    transform: { op: "bogus" },
+    apply: true,
+  });
+  assert.equal(bad.status, 400);
   server.close();
 });

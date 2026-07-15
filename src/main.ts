@@ -13,14 +13,14 @@ const USAGE = `skill-loom — one canonical vault of agent skills, symlinked int
 
 usage:
   skill-loom init
-  skill-loom add <name> [--category <dir>]
+  skill-loom add <name> [--domain <d>] [--layer <l>] [--status <s>] [--description <text>]
   skill-loom link [--apply]
   skill-loom status
   skill-loom doctor
   skill-loom archive <name> [--reason <text>] [--apply]
   skill-loom migrate <old> <new> [--apply]
   skill-loom ui [--port N] [--host ADDR] [--no-open]
-  skill-loom sync [--apply]
+  skill-loom sync [--apply] [--force]
 
 link, archive, migrate and sync are dry-run by default: nothing changes without --apply.
 Exit codes: 0 ok · 1 problems found · 2 usage/config error.`;
@@ -54,8 +54,13 @@ export function main(argv: string[], cwd: string): number {
       case "init":
         return runInit(cwd);
       case "add": {
-        const category = opt(args, "--category");
-        return runAdd(cwd, args.shift(), category);
+        const opts = {
+          description: opt(args, "--description"),
+          domain: opt(args, "--domain"),
+          layer: opt(args, "--layer"),
+          status: opt(args, "--status"),
+        };
+        return runAdd(cwd, args.shift(), opts);
       }
       case "link":
         return runLink(cwd, flag(args, "--apply"));
@@ -87,8 +92,10 @@ export function main(argv: string[], cwd: string): number {
           open: !noOpen,
         });
       }
-      case "sync":
-        return runSync(cwd, flag(args, "--apply"));
+      case "sync": {
+        const apply = flag(args, "--apply");
+        return runSync(cwd, apply, flag(args, "--force"));
+      }
       default:
         console.error(`unknown command "${cmd}"\n\n${USAGE}`);
         return 2;

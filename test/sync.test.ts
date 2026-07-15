@@ -54,11 +54,57 @@ test("syncStatus: non-git, no-remote, clean-with-remote", () => {
   assert.equal(st2.ahead, 0);
 });
 
-test("syncOp: exit 2 senza git o senza remote", () => {
+test("syncOp: un vault non-git esce 2", () => {
   assert.equal(syncOp(makeTmp(), true).status, 2);
-  const noRemote = makeTmp();
-  initRepo(noRemote);
-  assert.equal(syncOp(noRemote, true).status, 2);
+});
+
+test("syncOp senza remote: versiona in locale invece di errore", () => {
+  // Vault git valido ma senza origin: un commit dev'essere possibile lo stesso.
+  const local = makeTmp();
+  initRepo(local);
+  makeConfig(local, {});
+  makeSkill(local, "cat", "alpha");
+  git(local, "add", "-A");
+  git(local, "commit", "-q", "-m", "baseline", "--no-verify");
+
+  // pulito → nessuna azione, exit 0 (non è un errore)
+  assert.equal(syncOp(local, true).status, 0);
+
+  // modifica pendente → dry-run mostra "commit ... locally", apply committa
+  writeFileSync(
+    path.join(local, "cat", "alpha", "SKILL.md"),
+    "---\nname: alpha\ndescription: edited\n---\n\n# alpha\n",
+  );
+  const dry = syncOp(local, false);
+  assert.equal(dry.status, 0);
+  assert.ok(dry.actions.some((x) => /local/i.test(x)));
+  assert.notEqual(git(local, "status", "--porcelain").stdout.trim(), ""); // dry-run non tocca
+  const wet = syncOp(local, true);
+  assert.equal(wet.status, 0);
+  assert.match(wet.message, /local/i);
+  assert.equal(git(local, "status", "--porcelain").stdout.trim(), ""); // committato
+});
+
+test("syncOp gate: blocca un commit che viola le regole; force sblocca", async () => {
+  const { saveConfig, loadConfig } = await import("../src/config.js");
+  const vault = makeTmp();
+  initRepo(vault);
+  makeConfig(vault, {});
+  // strict: ogni skill deve avere `domain`
+  saveConfig(vault, {
+    ...loadConfig(vault),
+    lint: { strict: true, requireTaxonomy: ["domain"] },
+  });
+  makeSkill(vault, "cat", "alpha"); // niente domain → viola lo strict
+  // c'è roba da committare → il gate scatta e blocca
+  const gated = syncOp(vault, true);
+  assert.equal(gated.status, 1);
+  assert.ok(gated.gate && gated.gate.length > 0);
+  assert.notEqual(git(vault, "status", "--porcelain").stdout.trim(), ""); // non committato
+  // force = "commit comunque" → bypassa il gate
+  const forced = syncOp(vault, true, true);
+  assert.equal(forced.status, 0);
+  assert.equal(git(vault, "status", "--porcelain").stdout.trim(), ""); // committato
 });
 
 test("syncOp: dry-run non tocca, apply committa e pusha, il clone riceve", () => {

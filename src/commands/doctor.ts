@@ -1,22 +1,11 @@
-import { loadConfig } from "../config.js";
-import { scanVault, validateVault } from "../vault.js";
-import { orphanLinks, statusMatrix } from "../linker.js";
-import { green, red } from "../output.js";
+import { green, red, yellow } from "../output.js";
 import { syncStatus } from "../sync.js";
+import { collectDoctor } from "../gate.js";
 
 export function runDoctor(vaultDir: string): number {
-  const cfg = loadConfig(vaultDir);
-  const skills = scanVault(vaultDir, cfg);
-  const problems = validateVault(skills);
-  const unhealthy = statusMatrix(skills, cfg).filter(
-    (m) => m.state === "broken" || m.state === "foreign",
-  );
-  const orphans = orphanLinks(vaultDir, cfg, skills);
-  for (const p of problems) console.error(red(`vault ${p.kind}: ${p.detail}`));
-  for (const u of unhealthy)
-    console.error(red(`consumer ${u.consumer}: "${u.skill}" is ${u.state}`));
-  for (const o of orphans) console.error(red(`orphan link: ${o}`));
-  const count = problems.length + unhealthy.length + orphans.length;
+  const { count, blocking, warnings } = collectDoctor(vaultDir);
+  for (const b of blocking) console.error(red(b));
+  for (const w of warnings) console.error(yellow(w));
   console.log(
     count === 0 ? green("vault healthy") : `${count} problem(s) found`,
   );

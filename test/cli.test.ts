@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   readFileSync,
+  writeFileSync,
   lstatSync,
   mkdirSync as mkdirSync2,
   rmSync,
@@ -46,8 +48,115 @@ test("init creates loom.json and archive/, second run exits 2", async () => {
   const vault = makeTmp();
   assert.equal(runInit(vault), 0);
   assert.ok(existsSync(path.join(vault, "loom.json")));
-  assert.ok(existsSync(path.join(vault, "archive")));
+  assert.ok(existsSync(path.join(vault, ".archive")));
   assert.equal(runInit(vault), 2);
+});
+
+test("init writes a .gitignore covering secrets, build artifacts and OS noise", async () => {
+  const { runInit } = await import("../src/commands/init.js");
+  const vault = makeTmp();
+  runInit(vault);
+  const gi = readFileSync(path.join(vault, ".gitignore"), "utf8");
+  // A vault is committed and `sync --apply` runs `git add -A`, so secrets that
+  // land in a tool-skill (a .env, a *.sqlite, a credentials/ dir) would be
+  // pushed unless ignored by default.
+  for (const pat of [
+    ".env",
+    "credentials/",
+    "*.sqlite",
+    "node_modules/",
+    ".venv/",
+    ".DS_Store",
+  ]) {
+    assert.ok(gi.includes(pat), `expected .gitignore to contain ${pat}`);
+  }
+});
+
+test("init scaffolds a CONVENTIONS.md starter", async () => {
+  const { runInit } = await import("../src/commands/init.js");
+  const vault = makeTmp();
+  runInit(vault);
+  const conv = readFileSync(path.join(vault, "CONVENTIONS.md"), "utf8");
+  assert.match(conv, /^# /m); // has a heading
+  assert.match(conv, /loom\.json/); // ties to the lint block
+});
+
+test("init scaffolds a source-registry.yaml starter", async () => {
+  const { runInit } = await import("../src/commands/init.js");
+  const vault = makeTmp();
+  runInit(vault);
+  const reg = readFileSync(path.join(vault, "source-registry.yaml"), "utf8");
+  assert.match(reg, /^roots:/m);
+  assert.match(reg, /^sources:/m);
+});
+
+test("init commits the scaffold so a fresh vault opens clean", async () => {
+  const { runInit } = await import("../src/commands/init.js");
+  // git needs an identity for the commit; make the test independent of the
+  // machine's global config.
+  const idKeys = [
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+  ];
+  const saved = Object.fromEntries(idKeys.map((k) => [k, process.env[k]]));
+  Object.assign(process.env, {
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@local",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@local",
+  });
+  try {
+    const vault = makeTmp();
+    assert.equal(runInit(vault), 0);
+    const log = spawnSync("git", ["-C", vault, "log", "--oneline"], {
+      encoding: "utf8",
+    });
+    assert.equal(log.status, 0);
+    assert.equal(log.stdout.trim().split("\n").filter(Boolean).length, 1);
+    const porcelain = spawnSync("git", ["-C", vault, "status", "--porcelain"], {
+      encoding: "utf8",
+    });
+    assert.equal(porcelain.stdout.trim(), ""); // nothing left as "unsaved"
+  } finally {
+    for (const k of idKeys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+});
+
+test("doctor: a consistency warning does not fail the exit code", async () => {
+  const { runDoctor } = await import("../src/commands/doctor.js");
+  const vault = makeTmp();
+  makeConfig(vault, {});
+  const dir = makeSkill(vault, "cat", "alpha");
+  writeFileSync(
+    path.join(dir, "SKILL.md"),
+    "---\nname: alpha\ndescription: x\n---\n\n# Not Alpha\n",
+  );
+  assert.equal(runDoctor(vault), 0);
+});
+
+test("doctor: lint strict promotes hygiene findings to exit-code failures", async () => {
+  const { runDoctor } = await import("../src/commands/doctor.js");
+  const { loadConfig, saveConfig } = await import("../src/config.js");
+  const vault = makeTmp();
+  makeConfig(vault, {});
+  const cfg = loadConfig(vault);
+  makeSkill(vault, "cat", "alpha"); // clean, but has no domain
+
+  // lenient: a required-taxonomy gap is a warning → exit 0
+  saveConfig(vault, { ...cfg, lint: { requireTaxonomy: ["domain"] } });
+  assert.equal(runDoctor(vault), 0);
+
+  // strict: the same gap fails the exit code → exit 1
+  saveConfig(vault, {
+    ...cfg,
+    lint: { strict: true, requireTaxonomy: ["domain"] },
+  });
+  assert.equal(runDoctor(vault), 1);
 });
 
 test("add scaffolds SKILL.md, rejects invalid and duplicate names", async () => {
@@ -55,14 +164,11 @@ test("add scaffolds SKILL.md, rejects invalid and duplicate names", async () => 
   const { runAdd } = await import("../src/commands/add.js");
   const vault = makeTmp();
   runInit(vault);
-  assert.equal(runAdd(vault, "my-skill", "business"), 0);
-  const md = readFileSync(
-    path.join(vault, "business", "my-skill", "SKILL.md"),
-    "utf8",
-  );
+  assert.equal(runAdd(vault, "my-skill", {}), 0);
+  const md = readFileSync(path.join(vault, "my-skill", "SKILL.md"), "utf8");
   assert.match(md, /^name: my-skill$/m);
-  assert.equal(runAdd(vault, "My_Skill", undefined), 2);
-  assert.equal(runAdd(vault, "my-skill", undefined), 2);
+  assert.equal(runAdd(vault, "My_Skill", {}), 2);
+  assert.equal(runAdd(vault, "my-skill", {}), 2);
 });
 
 function vaultWithConsumer() {
@@ -110,24 +216,19 @@ test("status exits 0 and prints a row per skill", async () => {
   assert.equal(runStatus(vault), 0);
 });
 
-test("archive: dry-run touches nothing; --apply moves skill, unlinks, records in loom.json", async () => {
+test("archive: dry-run touches nothing; --apply moves the skill to .archive and unlinks", async () => {
   const { runArchive } = await import("../src/commands/archive.js");
   const { runLink } = await import("../src/commands/link.js");
-  const { loadConfig } = await import("../src/config.js");
   const { vault, consumerDir } = vaultWithConsumer();
   makeSkill(vault, "cat", "alpha");
   runLink(vault, true);
   assert.equal(runArchive(vault, "alpha", "superseded", false), 0);
   assert.ok(existsSync(path.join(vault, "cat", "alpha"))); // dry-run: untouched
   assert.equal(runArchive(vault, "alpha", "superseded", true), 0);
-  assert.ok(existsSync(path.join(vault, "archive", "alpha", "SKILL.md")));
+  assert.ok(existsSync(path.join(vault, ".archive", "alpha", "SKILL.md")));
   assert.ok(!existsSync(path.join(vault, "cat", "alpha")));
   assert.ok(
     !lstatSync(path.join(consumerDir, "alpha"), { throwIfNoEntry: false }),
-  );
-  assert.deepEqual(
-    loadConfig(vault).archived.map((a) => [a.name, a.reason]),
-    [["alpha", "superseded"]],
   );
   assert.equal(runArchive(vault, "alpha", undefined, true), 2); // not found anymore
 });

@@ -14,11 +14,26 @@ import {
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, expandTilde } from "./config.js";
+import {
+  loadConfig,
+  saveConfig,
+  expandTilde,
+  resolveConsumers,
+  validateLint,
+  CONFIG_NAME,
+  type LoomConfig,
+  type LintConfig,
+} from "./config.js";
+import { rulesImpact } from "./gate.js";
+import { setServed } from "./inplace.js";
 import {
   scanVault,
   validateVault,
+  skillWarnings,
   parseFrontmatterField,
+  parseFrontmatterName,
+  parseFirstH1,
+  ARCHIVE_DIR,
   type Skill,
 } from "./vault.js";
 import {
@@ -32,9 +47,15 @@ import {
 import {
   addOp,
   archiveOp,
+  bulkArchiveOp,
+  bulkRenameOp,
+  bulkRestoreOp,
+  bulkStatusOp,
+  bulkTaxonomyOp,
   migrateOp,
   restoreOp,
   type OpOutcome,
+  type RenameTransform,
 } from "./ops.js";
 import { syncOp, syncStatus, syncFiles, setRemote, vaultRepo } from "./sync.js";
 import { PRESETS } from "./commands/init.js";
@@ -48,16 +69,20 @@ const ACRONYMS = new Set([
   "sql", "db", "orm", "ci", "cd", "os", "ip", "dns", "ssh", "tls", "ssl",
   "jwt", "oauth", "uuid", "id", "qa", "mcp", "cdn", "crud", "dto", "seo",
   "aws", "gcp", "cpu", "gpu", "ram", "io", "faq", "vps", "3d", "2d",
-  "gpt", "tts", "crm", "ynab", "nas", "pptx", "en", "it",
+  "gpt", "tts", "crm", "ynab", "nas", "pptx", "en", "it", "pmf",
 ]);
 const PROPER: Record<string, string> = {
+  agents: "AGENTS",
   linkedin: "LinkedIn",
   openai: "OpenAI",
   openclaw: "OpenClaw",
   github: "GitHub",
   posthog: "PostHog",
   heygen: "HeyGen",
+  macos: "macOS",
+  opencode: "OpenCode",
   npm: "npm",
+  noteplan: "NotePlan",
 };
 const MINOR = new Set([
   "to",
@@ -108,16 +133,52 @@ export function clientNames(
 export function aggregateHealth(
   states: LinkState[],
 ): "active" | "attention" | "inactive" {
+  // "served" (in-place, read straight from the vault) is as healthy as "linked".
+  const healthy = (s: LinkState) => s === "linked" || s === "served";
   if (states.some((s) => s === "broken" || s === "foreign")) return "attention";
-  if (states.length > 0 && states.every((s) => s === "linked")) return "active";
-  if (states.some((s) => s === "linked")) return "attention";
+  if (states.length > 0 && states.every(healthy)) return "active";
+  if (states.some(healthy)) return "attention";
   return "inactive";
+}
+
+// Vault-root governance docs surfaced (read-only) in the dashboard's Rules
+// view. A fixed whitelist doubles as the path guard for GET /api/doc.
+const GOVERNANCE_DOCS = ["CONVENTIONS.md", "README.md", "source-registry.yaml"];
+
+// Archived skills come from the real archive/ folder (the source of truth) —
+// loom.json's `archived` list only adds date/reason metadata when present, so
+// a skill moved into archive/ by hand still shows up.
+function scanArchived(vaultDir: string, cfg: LoomConfig) {
+  const dir = path.join(vaultDir, ARCHIVE_DIR);
+  if (!existsSync(dir)) return [];
+  // The .archive/ folder is the single source of truth: archiving is a pure
+  // move, so everything is read from the file. Date approximates from mtime.
+  return readdirSync(dir, { withFileTypes: true })
+    .filter(
+      (e) => e.isDirectory() && existsSync(path.join(dir, e.name, "SKILL.md")),
+    )
+    .map((e) => {
+      const md = path.join(dir, e.name, "SKILL.md");
+      const st = statSync(md, { throwIfNoEntry: false });
+      return {
+        name: e.name,
+        title: humanizeName(e.name, cfg.names),
+        description: parseFrontmatterField(md, "description") ?? "",
+        icon: parseFrontmatterField(md, "icon") ?? null,
+        iconColor: parseFrontmatterField(md, "icon-color") ?? null,
+        domain: parseFrontmatterField(md, "domain"),
+        layer: parseFrontmatterField(md, "layer"),
+        status: parseFrontmatterField(md, "status") ?? "active",
+        date: st ? st.mtime.toISOString().slice(0, 10) : "",
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function buildState(vaultDir: string): object {
   const cfg = loadConfig(vaultDir);
   const skills = scanVault(vaultDir, cfg);
-  const matrix = statusMatrix(skills, cfg);
+  const matrix = statusMatrix(skills, cfg, vaultDir);
   // Per-skill git state: does anything under the skill's folder still need
   // a commit, a push, or a pull? Priority: dirty > ahead > behind > clean.
   const sf = syncFiles(vaultDir);
@@ -132,7 +193,7 @@ export function buildState(vaultDir: string): object {
   return {
     vaultDir,
     consumers: cfg.consumers,
-    archived: cfg.archived,
+    archived: scanArchived(vaultDir, cfg),
     names: clientNames(cfg.names),
     customNames: cfg.names,
     // Known runtimes detected on this machine but not configured yet — the
@@ -168,8 +229,28 @@ export function buildState(vaultDir: string): object {
       };
     }),
     problems: validateVault(skills),
+    warnings: skillWarnings(skills, cfg),
     matrix,
     orphans: orphanLinks(vaultDir, cfg, skills),
+    docs: GOVERNANCE_DOCS.filter((n) => existsSync(path.join(vaultDir, n))).map(
+      (name) => ({ name, kind: fileKind(name) }),
+    ),
+    // What the New skill form needs to make a skill born gate-ready: which
+    // taxonomy the vault requires, the allowed values, required sections and
+    // the description length floor. Null when the vault has no lint block.
+    lint: cfg.lint
+      ? {
+          requireTaxonomy: cfg.lint.requireTaxonomy ?? [],
+          requireSections: cfg.lint.requireSections ?? [],
+          allowedDomains: cfg.lint.allowedDomains ?? [],
+          allowedLayers: cfg.lint.allowedLayers ?? [],
+          descriptionMinChars: cfg.lint.descriptionMinChars ?? null,
+          descriptionMaxChars: cfg.lint.descriptionMaxChars ?? null,
+          bodyMaxLines: cfg.lint.bodyMaxLines ?? null,
+          forbidBodyPatterns: cfg.lint.forbidBodyPatterns ?? [],
+          strict: cfg.lint.strict === true,
+        }
+      : null,
   };
 }
 
@@ -241,6 +322,13 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
+// A non-empty array of non-empty strings, else undefined (rejected by routes).
+function strArr(v: unknown): string[] | undefined {
+  if (!Array.isArray(v) || v.length === 0) return undefined;
+  if (!v.every((x) => typeof x === "string" && x.length > 0)) return undefined;
+  return v as string[];
+}
+
 function serveHtml(res: ServerResponse): void {
   const htmlPath = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -263,8 +351,10 @@ const TEXT_EXT = new Set([
   "",
   ".md",
   ".markdown",
+  ".mdx",
   ".txt",
   ".py",
+  ".php",
   ".sh",
   ".bash",
   ".js",
@@ -322,7 +412,42 @@ function listSkillFiles(
 
 function findSkill(vaultDir: string, name: string | null): Skill | undefined {
   if (!name) return undefined;
-  return scanVault(vaultDir, loadConfig(vaultDir)).find((s) => s.name === name);
+  const active = scanVault(vaultDir, loadConfig(vaultDir)).find(
+    (s) => s.name === name,
+  );
+  if (active) return active;
+  // fall back to the archive so archived skills are browsable too
+  const dir = path.join(vaultDir, ARCHIVE_DIR, name);
+  const md = path.join(dir, "SKILL.md");
+  if (existsSync(md))
+    return {
+      name,
+      dir,
+      frontmatterName: parseFrontmatterName(md),
+      firstH1: parseFirstH1(md),
+    };
+  return undefined;
+}
+
+function isArchivedSkill(vaultDir: string, skill: Skill): boolean {
+  return path.dirname(skill.dir) === path.join(vaultDir, ARCHIVE_DIR);
+}
+
+/** Resolve an optional in-skill file path into an absolute git pathspec, guarding
+ *  against escaping the skill directory (same guard as GET /api/file). No path →
+ *  the whole skill dir; escaping path → null (caller returns 400). */
+function scopedTarget(skillDir: string, rel: string | null): string | null {
+  if (!rel) return skillDir;
+  const skillReal = realpathSync(skillDir);
+  let real: string;
+  try {
+    real = realpathSync(path.join(skillDir, rel));
+  } catch {
+    return null;
+  }
+  return real === skillReal || real.startsWith(skillReal + path.sep)
+    ? real
+    : null;
 }
 
 export function createUiServer(vaultDir: string): Server {
@@ -335,6 +460,21 @@ export function createUiServer(vaultDir: string): Server {
         return sendJson(res, 200, buildState(vaultDir));
       if (route === "GET /api/diff")
         return sendJson(res, 200, gitDiff(vaultDir));
+      if (route === "GET /api/doc") {
+        // Read-only vault-root governance doc. The whitelist is the guard:
+        // anything not in GOVERNANCE_DOCS (including traversal) is refused.
+        const name = url.searchParams.get("name") ?? "";
+        if (!GOVERNANCE_DOCS.includes(name))
+          return sendJson(res, 400, { error: "not a governance doc" });
+        const file = path.join(vaultDir, name);
+        if (!existsSync(file))
+          return sendJson(res, 404, { error: "doc not found" });
+        return sendJson(res, 200, {
+          name,
+          kind: fileKind(name),
+          content: readFileSync(file, "utf8"),
+        });
+      }
       if (route === "POST /api/link") {
         const body = await readBody(req);
         const apply = body.apply === true;
@@ -362,8 +502,12 @@ export function createUiServer(vaultDir: string): Server {
           addOp(
             vaultDir,
             str(body.name),
-            str(body.category),
-            str(body.description),
+            {
+              description: str(body.description),
+              domain: str(body.domain),
+              layer: str(body.layer),
+              status: str(body.status),
+            },
             body.apply === true,
           ),
           body.apply === true,
@@ -400,16 +544,34 @@ export function createUiServer(vaultDir: string): Server {
         if (!skill) return sendJson(res, 404, { error: "skill not found" });
         const cfg = loadConfig(vaultDir);
         const md = path.join(skill.dir, "SKILL.md");
+        const archived = isArchivedSkill(vaultDir, skill);
         return sendJson(res, 200, {
           name: skill.name,
           dir: skill.dir,
           category: path.relative(vaultDir, path.dirname(skill.dir)) || ".",
           description: parseFrontmatterField(md, "description") ?? "",
+          archived,
+          // Archiving no longer records a reason (folder-based archive).
+          reason: "",
+          // Raw SKILL.md frontmatter block, so the detail can render taxonomy
+          // chips in the header and the metadata object in the rail.
+          frontmatter: (() => {
+            try {
+              const src = readFileSync(md, "utf8");
+              const fmM = /^---\n([\s\S]*?)\n---/.exec(src);
+              return fmM ? fmM[1] : "";
+            } catch {
+              return "";
+            }
+          })(),
           files: listSkillFiles(skill.dir),
-          states: statusMatrix([skill], cfg).map((m) => ({
-            consumer: m.consumer,
-            state: m.state,
-          })),
+          // Archived skills carry no live runtime links.
+          states: archived
+            ? []
+            : statusMatrix([skill], cfg).map((m) => ({
+                consumer: m.consumer,
+                state: m.state,
+              })),
         });
       }
       if (route === "GET /api/file") {
@@ -450,6 +612,14 @@ export function createUiServer(vaultDir: string): Server {
       if (route === "GET /api/history") {
         const skill = findSkill(vaultDir, url.searchParams.get("name"));
         if (!skill) return sendJson(res, 404, { error: "skill not found" });
+        // Optional ?path scopes the log to one file in the skill, so the rail
+        // tracks the file the viewer shows, not always SKILL.md. --follow keeps
+        // the history across renames; it needs a single file pathspec, so it is
+        // only added when a path is given.
+        const rel = url.searchParams.get("path");
+        const scoped = scopedTarget(skill.dir, rel);
+        if (scoped === null)
+          return sendJson(res, 400, { error: "path escapes skill directory" });
         const out = spawnSync(
           "git",
           [
@@ -458,8 +628,9 @@ export function createUiServer(vaultDir: string): Server {
             "log",
             "--format=%h%x09%ad%x09%s",
             "--date=short",
+            ...(rel ? ["--follow"] : []),
             "--",
-            skill.dir,
+            scoped,
           ],
           { encoding: "utf8" },
         );
@@ -474,15 +645,68 @@ export function createUiServer(vaultDir: string): Server {
           });
         return sendJson(res, 200, { versioned: true, commits });
       }
+      if (route === "GET /api/doc-history") {
+        // git history of a config doc (a vault-root governance file or loom.json),
+        // so the Config reference panes can show the same history as skills do.
+        const name = url.searchParams.get("name") ?? "";
+        if (![...GOVERNANCE_DOCS, CONFIG_NAME].includes(name))
+          return sendJson(res, 400, { error: "not a config doc" });
+        const file = path.join(vaultDir, name);
+        if (!existsSync(file)) return sendJson(res, 200, { versioned: false });
+        const out = spawnSync(
+          "git",
+          [
+            "-C",
+            vaultDir,
+            "log",
+            "--format=%h%x09%ad%x09%s",
+            "--date=short",
+            "--",
+            file,
+          ],
+          { encoding: "utf8" },
+        );
+        if (out.error || out.status !== 0)
+          return sendJson(res, 200, { versioned: false });
+        const commits = out.stdout
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => {
+            const [hash = "", date = "", ...rest] = l.split("\t");
+            return { hash, date, subject: rest.join("\t") };
+          });
+        return sendJson(res, 200, { versioned: true, commits });
+      }
+      if (route === "GET /api/doc-commit") {
+        const name = url.searchParams.get("name") ?? "";
+        if (![...GOVERNANCE_DOCS, CONFIG_NAME].includes(name))
+          return sendJson(res, 400, { error: "not a config doc" });
+        const hash = url.searchParams.get("hash") ?? "";
+        if (!/^[0-9a-f]{7,40}$/.test(hash))
+          return sendJson(res, 400, { error: "invalid hash" });
+        const out = spawnSync(
+          "git",
+          ["-C", vaultDir, "show", hash, "--", path.join(vaultDir, name)],
+          { encoding: "utf8" },
+        );
+        if (out.error || out.status !== 0)
+          return sendJson(res, 400, { error: "unknown commit" });
+        return sendJson(res, 200, { diff: out.stdout });
+      }
       if (route === "GET /api/commit") {
         const skill = findSkill(vaultDir, url.searchParams.get("name"));
         if (!skill) return sendJson(res, 404, { error: "skill not found" });
         const hash = url.searchParams.get("hash") ?? "";
         if (!/^[0-9a-f]{7,40}$/.test(hash))
           return sendJson(res, 400, { error: "invalid hash" });
+        // ?path narrows the diff to the file the viewer is showing, so opening a
+        // commit from a file's history shows that file's change, not the whole skill.
+        const scoped = scopedTarget(skill.dir, url.searchParams.get("path"));
+        if (scoped === null)
+          return sendJson(res, 400, { error: "path escapes skill directory" });
         const out = spawnSync(
           "git",
-          ["-C", vaultDir, "show", hash, "--", skill.dir],
+          ["-C", vaultDir, "show", hash, "--", scoped],
           { encoding: "utf8" },
         );
         if (out.error || out.status !== 0)
@@ -500,7 +724,7 @@ export function createUiServer(vaultDir: string): Server {
       if (route === "POST /api/sync") {
         const body = await readBody(req);
         const apply = body.apply === true;
-        return sendOp(res, syncOp(vaultDir, apply), apply);
+        return sendOp(res, syncOp(vaultDir, apply, body.force === true), apply);
       }
       if (route === "POST /api/link-toggle") {
         const body = await readBody(req);
@@ -525,6 +749,35 @@ export function createUiServer(vaultDir: string): Server {
           apply,
         );
         return sendJson(res, 200, { applied: apply, actions, skipped });
+      }
+      if (route === "POST /api/inplace-toggle") {
+        // Activate/deactivate an in-place consumer by editing the array it is
+        // served through (e.g. OpenClaw's extraDirs). Never restarts anything —
+        // the caller is told to reload the runtime.
+        const body = await readBody(req);
+        const consumer = str(body.consumer);
+        const on = body.on === true;
+        const apply = body.apply === true;
+        if (!consumer)
+          return sendJson(res, 400, { error: "consumer required" });
+        const c = resolveConsumers(loadConfig(vaultDir)).find(
+          (x) => x.name === consumer,
+        );
+        if (!c || c.mode !== "in-place" || !c.servedVia)
+          return sendJson(res, 400, {
+            error: `"${consumer}" is not an in-place consumer with a servedVia config`,
+          });
+        const action = `${on ? "add" : "remove"} the vault in ${c.servedVia.file} → ${c.servedVia.jsonPath}`;
+        if (!apply)
+          return sendJson(res, 200, { applied: false, actions: [action] });
+        const { changed } = setServed(vaultDir, c.servedVia, on);
+        return sendJson(res, 200, {
+          applied: true,
+          changed,
+          message: changed
+            ? `${on ? "Activated" : "Deactivated"} — restart the runtime to apply.`
+            : "Already in that state.",
+        });
       }
       if (route === "POST /api/restore") {
         const body = await readBody(req);
@@ -575,6 +828,98 @@ export function createUiServer(vaultDir: string): Server {
         }
         saveConfig(vaultDir, cfg);
         return sendJson(res, 200, { ok: true, names: cfg.names });
+      }
+      if (route === "POST /api/rules") {
+        // Editing the rules re-arms the gate that blocks skill saves, so this is the
+        // one config write that goes through a dry-run: apply:false returns the
+        // impact on today's skills; apply:true writes the lint block.
+        const body = await readBody(req);
+        const err = validateLint(body.lint);
+        if (err) return sendJson(res, 400, { error: err });
+        const lint = body.lint as LintConfig;
+        if (body.apply === true) {
+          const cfg = loadConfig(vaultDir);
+          cfg.lint = lint;
+          saveConfig(vaultDir, cfg);
+          return sendJson(res, 200, { ok: true, lint: cfg.lint });
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          impact: rulesImpact(vaultDir, lint),
+        });
+      }
+      if (route === "GET /api/loom-json") {
+        const file = path.join(vaultDir, CONFIG_NAME);
+        if (!existsSync(file))
+          return sendJson(res, 404, { error: "no loom.json" });
+        return sendJson(res, 200, { content: readFileSync(file, "utf8") });
+      }
+      if (route === "POST /api/bulk/status") {
+        const body = await readBody(req);
+        const names = strArr(body.names);
+        if (!names)
+          return sendJson(res, 400, {
+            error: "names must be a non-empty string array",
+          });
+        const apply = body.apply === true;
+        return sendOp(
+          res,
+          bulkStatusOp(vaultDir, names, str(body.status) ?? "", apply),
+          apply,
+        );
+      }
+      if (route === "POST /api/bulk/taxonomy") {
+        const body = await readBody(req);
+        const names = strArr(body.names);
+        if (!names)
+          return sendJson(res, 400, {
+            error: "names must be a non-empty string array",
+          });
+        const field = str(body.field);
+        if (field !== "domain" && field !== "layer")
+          return sendJson(res, 400, { error: "field must be domain or layer" });
+        const apply = body.apply === true;
+        return sendOp(
+          res,
+          bulkTaxonomyOp(vaultDir, names, field, str(body.value) ?? "", apply),
+          apply,
+        );
+      }
+      if (route === "POST /api/bulk/archive") {
+        const body = await readBody(req);
+        const names = strArr(body.names);
+        if (!names)
+          return sendJson(res, 400, {
+            error: "names must be a non-empty string array",
+          });
+        const apply = body.apply === true;
+        return sendOp(res, bulkArchiveOp(vaultDir, names, apply), apply);
+      }
+      if (route === "POST /api/bulk/restore") {
+        const body = await readBody(req);
+        const names = strArr(body.names);
+        if (!names)
+          return sendJson(res, 400, {
+            error: "names must be a non-empty string array",
+          });
+        const apply = body.apply === true;
+        return sendOp(res, bulkRestoreOp(vaultDir, names, apply), apply);
+      }
+      if (route === "POST /api/bulk/rename") {
+        const body = await readBody(req);
+        const names = strArr(body.names);
+        if (!names)
+          return sendJson(res, 400, {
+            error: "names must be a non-empty string array",
+          });
+        const t = body.transform as RenameTransform | undefined;
+        const ops = ["add-prefix", "strip-prefix", "replace"];
+        if (!t || typeof t !== "object" || !ops.includes(t.op))
+          return sendJson(res, 400, {
+            error: "transform.op must be add-prefix, strip-prefix or replace",
+          });
+        const apply = body.apply === true;
+        return sendOp(res, bulkRenameOp(vaultDir, names, t, apply), apply);
       }
       sendJson(res, 404, { error: "not found" });
     } catch (err) {

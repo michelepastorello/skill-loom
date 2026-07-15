@@ -6,6 +6,7 @@ import {
   lstatSync,
   readlinkSync,
   existsSync,
+  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import {
@@ -52,6 +53,26 @@ test("planLinks: create → apply → ok; conflict on real dir; replace-stale on
     bravo: "conflict",
     charlie: "ok",
   });
+});
+
+test("planLinks links only active skills", () => {
+  const vault = makeTmp();
+  const consumerDir = path.join(makeTmp(), "skills");
+  mkdirSync(consumerDir, { recursive: true });
+  const cfg = makeConfig(vault, { claude: consumerDir });
+  const mk = (name: string, status: string) => {
+    const d = path.join(vault, name);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(
+      path.join(d, "SKILL.md"),
+      `---\nname: ${name}\ndescription: x\nstatus: ${status}\n---\n\n# ${name}\n`,
+    );
+  };
+  mk("liveone", "active");
+  mk("draftone", "draft");
+  const plan = planLinks(scanVault(vault, cfg), cfg);
+  const skillsInPlan = [...new Set(plan.map((p) => p.skill))];
+  assert.deepEqual(skillsInPlan.sort(), ["liveone"]);
 });
 
 test("statusMatrix: linked / missing / broken / foreign", () => {
@@ -121,4 +142,44 @@ test("setSkillLinks never removes a real copy (foreign), reports skipped", () =>
 test("setSkillLinks throws on unknown consumer", () => {
   const cfg = makeConfig(makeTmp(), {});
   assert.throws(() => setSkillLinks([], cfg, "ghost", null, true, false));
+});
+
+test("in-place consumers are served in place, never symlinked", () => {
+  const vault = makeTmp();
+  const symDir = path.join(makeTmp(), "skills");
+  const base = makeConfig(vault, { claude: symDir });
+  const cfg = {
+    ...base,
+    consumers: {
+      claude: symDir,
+      openclaw: { mode: "in-place" as const, note: "served" },
+    },
+  };
+  makeSkill(vault, "c", "alpha");
+  const skills = scanVault(vault, cfg);
+
+  // planLinks: only the symlink consumer yields items
+  assert.deepEqual(
+    [...new Set(planLinks(skills, cfg).map((p) => p.consumer))],
+    ["claude"],
+  );
+
+  // statusMatrix: in-place → "served"; symlink not linked yet → "missing"
+  const st = statusMatrix(skills, cfg);
+  assert.equal(
+    st.find((s) => s.consumer === "openclaw" && s.skill === "alpha")?.state,
+    "served",
+  );
+  assert.equal(
+    st.find((s) => s.consumer === "claude" && s.skill === "alpha")?.state,
+    "missing",
+  );
+
+  // orphanLinks never inspects an in-place consumer (it has no managed dir)
+  assert.deepEqual(orphanLinks(vault, cfg, skills), []);
+
+  // setSkillLinks refuses to touch an in-place consumer
+  const r = setSkillLinks(skills, cfg, "openclaw", "alpha", true, true);
+  assert.equal(r.actions.length, 0);
+  assert.equal(r.skipped.length, 1);
 });

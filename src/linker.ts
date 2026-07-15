@@ -8,8 +8,9 @@ import {
   unlinkSync,
 } from "node:fs";
 import path from "node:path";
-import { expandTilde, type LoomConfig } from "./config.js";
-import type { Skill } from "./vault.js";
+import { resolveConsumers, type LoomConfig } from "./config.js";
+import { isServed } from "./inplace.js";
+import { isActive, type Skill } from "./vault.js";
 
 export type PlanAction = "create" | "ok" | "replace-stale" | "conflict";
 
@@ -28,9 +29,11 @@ function resolveLink(target: string): string {
 
 export function planLinks(skills: Skill[], cfg: LoomConfig): PlanItem[] {
   const items: PlanItem[] = [];
-  for (const [consumer, rawDir] of Object.entries(cfg.consumers)) {
-    const dir = expandTilde(rawDir);
+  for (const { name: consumer, mode, dir } of resolveConsumers(cfg)) {
+    // In-place consumers read the vault directly — nothing to symlink.
+    if (mode === "in-place" || dir === null) continue;
     for (const skill of skills) {
+      if (!isActive(skill)) continue; // only active skills are projected
       const target = path.join(dir, skill.name);
       const source = path.resolve(skill.dir);
       const st = lstatSync(target, { throwIfNoEntry: false });
@@ -91,7 +94,7 @@ export function applyPlan(items: PlanItem[]): void {
   }
 }
 
-export type LinkState = "linked" | "missing" | "broken" | "foreign";
+export type LinkState = "linked" | "missing" | "broken" | "foreign" | "served";
 
 export interface StatusItem {
   consumer: string;
@@ -99,11 +102,32 @@ export interface StatusItem {
   state: LinkState;
 }
 
-export function statusMatrix(skills: Skill[], cfg: LoomConfig): StatusItem[] {
+export function statusMatrix(
+  skills: Skill[],
+  cfg: LoomConfig,
+  vaultDir?: string,
+): StatusItem[] {
   const items: StatusItem[] = [];
-  for (const [consumer, rawDir] of Object.entries(cfg.consumers)) {
-    const dir = expandTilde(rawDir);
+  for (const { name: consumer, mode, dir, servedVia } of resolveConsumers(
+    cfg,
+  )) {
+    const inPlace = mode === "in-place" || dir === null;
+    // An in-place consumer serves every skill (read straight from the vault).
+    // With a servedVia config we can check live activation; otherwise assume on.
+    const active =
+      inPlace && servedVia && vaultDir
+        ? isServed(vaultDir, servedVia)
+        : inPlace;
     for (const skill of skills) {
+      if (!isActive(skill)) continue; // non-active skills are never unhealthy coverage rows
+      if (inPlace) {
+        items.push({
+          consumer,
+          skill: skill.name,
+          state: active ? "served" : "missing",
+        });
+        continue;
+      }
       const target = path.join(dir, skill.name);
       const st = lstatSync(target, { throwIfNoEntry: false });
       let state: LinkState;
@@ -131,8 +155,9 @@ export function orphanLinks(
   const valid = new Set(skills.map((s) => path.resolve(s.dir)));
   const vaultPrefix = path.resolve(vaultDir) + path.sep;
   const orphans: string[] = [];
-  for (const rawDir of Object.values(cfg.consumers)) {
-    const dir = expandTilde(rawDir);
+  for (const { mode, dir } of resolveConsumers(cfg)) {
+    // In-place consumers have no managed directory to scan for stray links.
+    if (mode === "in-place" || dir === null) continue;
     if (!existsSync(dir)) continue;
     for (const entry of readdirSync(dir)) {
       const target = path.join(dir, entry);
@@ -159,14 +184,20 @@ export function setSkillLinks(
   on: boolean,
   apply: boolean,
 ): ToggleResult {
-  const rawDir = cfg.consumers[consumer];
-  if (rawDir === undefined) throw new Error(`unknown consumer "${consumer}"`);
-  const dir = expandTilde(rawDir);
+  const resolved = resolveConsumers(cfg).find((c) => c.name === consumer);
+  if (resolved === undefined) throw new Error(`unknown consumer "${consumer}"`);
   const targets = skillName
     ? skills.filter((s) => s.name === skillName)
     : skills;
   const actions: string[] = [];
   const skipped: string[] = [];
+  if (resolved.mode === "in-place" || resolved.dir === null) {
+    // Served in place via the runtime's own config — no per-skill links exist.
+    for (const skill of targets)
+      skipped.push(`${skill.name} (in-place consumer "${consumer}")`);
+    return { actions, skipped };
+  }
+  const dir = resolved.dir;
   for (const skill of targets) {
     const target = path.join(dir, skill.name);
     const source = path.resolve(skill.dir);
