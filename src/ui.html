@@ -65,6 +65,10 @@
       .switch.on::after {
         transform: translateX(14px);
       }
+      .switch:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
 
       /* status page: section headers + save action bar */
       .sec {
@@ -194,9 +198,9 @@
         }
       }
 
-      /* Category accents are set inline per section (catStyle in JS): a stable
-         hue per category name, kept off the state hues (green 160 / amber 68 /
-         red 25). --cat / --cat-soft feed the tiles and the section legend dot. */
+      /* Taxonomy accents are set inline per section (taxHueStyle in JS): a stable
+         hue per domain/layer value, kept off the state hues (green 160 / amber 68
+         / red 25). --tint / --tint-soft feed the tiles and the section legend dot. */
 
       * {
         box-sizing: border-box;
@@ -550,7 +554,7 @@
         width: 7px;
         height: 7px;
         border-radius: 50%;
-        background: var(--cat, var(--dim));
+        background: var(--tint, var(--dim));
         flex: none;
       }
       .ritem .n {
@@ -629,7 +633,15 @@
       table.ledger {
         border-collapse: collapse;
         width: 100%;
+        /* fixed layout: column widths come from the header, so they stay put
+           when filtering hides rows (and the table never exceeds its column) */
+        table-layout: fixed;
         font-size: 13.5px;
+      }
+      table.ledger td {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       table.ledger th {
         text-align: left;
@@ -702,10 +714,6 @@
       td.ldesc {
         color: var(--dim);
         font-size: 13px;
-        max-width: 320px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
       }
       td.lwhen {
         color: var(--faint);
@@ -738,8 +746,8 @@
         letter-spacing: 0.02em;
         text-transform: uppercase;
         white-space: nowrap;
-        color: var(--cat, var(--dim));
-        background: var(--cat-soft, var(--panel));
+        color: var(--tint, var(--dim));
+        background: var(--tint-soft, var(--panel));
         padding: 2px 8px;
         border-radius: 6px;
       }
@@ -747,7 +755,7 @@
         width: 6px;
         height: 6px;
         border-radius: 50%;
-        background: var(--cat, var(--dim));
+        background: var(--tint, var(--dim));
         flex: none;
       }
       .badge.bad {
@@ -797,7 +805,7 @@
         width: 9px;
         height: 9px;
         border-radius: 3px;
-        background: var(--cat, var(--accent));
+        background: var(--tint, var(--accent));
       }
       .grid {
         display: grid;
@@ -824,13 +832,73 @@
         box-shadow: var(--shadow);
         border-color: color-mix(
           in oklch,
-          var(--cat, var(--accent)) 42%,
+          var(--tint, var(--accent)) 42%,
           var(--line)
         );
       }
       .card.kbsel {
         border-color: var(--accent);
         box-shadow: 0 0 0 2px var(--accent-soft);
+      }
+      .card {
+        position: relative;
+      }
+      .card .selbox,
+      td.selcol .selbox {
+        display: inline-flex;
+        width: 16px;
+        height: 16px;
+        border: 1.5px solid var(--line);
+        border-radius: 4px;
+        background: var(--panel);
+      }
+      .card .selbox {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        opacity: 0;
+        transition: opacity 0.12s;
+      }
+      .card:hover .selbox,
+      .card.sel .selbox {
+        opacity: 1;
+      }
+      .card.sel .selbox,
+      tr.sel td.selcol .selbox {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .card.sel {
+        outline: 1.5px solid var(--accent);
+        outline-offset: -1.5px;
+        background: var(--accent-soft);
+      }
+      table.ledger tr.sel td {
+        background: var(--accent-soft);
+      }
+      table.ledger th.selcol,
+      table.ledger td.selcol {
+        width: 38px;
+        min-width: 38px;
+        padding-left: 14px;
+        padding-right: 0;
+        overflow: visible;
+        text-overflow: clip;
+        text-align: left;
+      }
+      /* The library area never selects text: a drag there is always a marquee,
+         never a native text-selection (grid + list). */
+      #groups {
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #marquee {
+        position: fixed;
+        z-index: 50;
+        border: 1px solid var(--accent);
+        background: var(--accent-soft);
+        pointer-events: none;
+        border-radius: 2px;
       }
       .card .top {
         display: flex;
@@ -846,8 +914,8 @@
         place-items: center;
         font-size: 17px;
         line-height: 1;
-        background: var(--cat-soft, var(--panel));
-        color: var(--cat, var(--dim));
+        background: var(--tint-soft, var(--panel));
+        color: var(--tint, var(--dim));
       }
       .tile.mono {
         font-size: 14.5px;
@@ -989,7 +1057,7 @@
       .fic {
         flex: none;
         display: inline-flex;
-        color: var(--cat, var(--dim));
+        color: var(--tint, var(--dim));
       }
       .fic svg {
         width: 15px;
@@ -1565,6 +1633,10 @@
         line-height: 1.6;
         margin: 0;
       }
+      pre.plain.wrap {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
       /* ── syntax highlighting theme ──────────────────────────────────────── */
       .tok-com {
         color: var(--faint);
@@ -1681,6 +1753,68 @@
         font-size: 13px;
         color: var(--dim);
       }
+      /* ── skill context menu ─────────────────────────────────────────────── */
+      .ctxmenu {
+        position: fixed;
+        z-index: 60;
+        min-width: 180px;
+        padding: 4px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+        font-size: 13px;
+      }
+      .ctxhd {
+        padding: 6px 10px;
+        color: var(--faint);
+        font-weight: 600;
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 4px;
+      }
+      .ctxitem {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+        padding: 7px 10px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--fg);
+        text-align: left;
+        cursor: pointer;
+        position: relative;
+      }
+      .ctxitem:hover {
+        background: var(--accent-soft);
+      }
+      .ctxitem.disabled {
+        color: var(--faint);
+        cursor: default;
+      }
+      .ctxitem.disabled:hover {
+        background: transparent;
+      }
+      .ctxarr {
+        color: var(--faint);
+      }
+      .ctxsub {
+        display: none;
+        position: absolute;
+        left: 100%;
+        top: -5px;
+        min-width: 160px;
+        padding: 4px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+      }
+      .ctxitem.has-sub:hover > .ctxsub {
+        display: block;
+      }
       .empty {
         color: var(--dim);
         padding: 22px;
@@ -1689,6 +1823,10 @@
         border: 1px solid var(--line);
         border-radius: 11px;
         max-width: 92ch;
+      }
+      /* the library "no matches" box spans the content, not the 92ch prose cap */
+      #noresult {
+        max-width: none;
       }
 
       /* ── form controls ──────────────────────────────────────────────────── */
@@ -1814,7 +1952,8 @@
       }
       body.fixed #app > .layout,
       body.fixed #app > .statuslayout,
-      body.fixed #app > .liblayout {
+      body.fixed #app > .liblayout,
+      body.fixed #app > .configlayout {
         flex: 1 1 auto;
         min-height: 0;
       }
@@ -1830,6 +1969,41 @@
       }
       #app > * {
         animation: loomfade 0.15s ease-out;
+      }
+      /* A same-view refresh (data reload) must not re-fade the whole view — that
+         reads as a background flash. The fade is only for real view changes. */
+      #app.norefade > * {
+        animation: none;
+      }
+      /* Top navigation progress bar (Linear-style): a thin accent line that fills
+         while an async view loads, then completes and fades. */
+      #navprog {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 2px;
+        width: 0;
+        background: var(--accent);
+        opacity: 0;
+        z-index: 20;
+        pointer-events: none;
+        transition:
+          width 0.2s ease-out,
+          opacity 0.25s ease-out 0.15s;
+      }
+      #navprog.loading {
+        width: 82%;
+        opacity: 1;
+        transition:
+          width 8s cubic-bezier(0.1, 0.9, 0.2, 1),
+          opacity 0.1s;
+      }
+      #navprog.done {
+        width: 100%;
+        opacity: 0;
+        transition:
+          width 0.15s ease-out,
+          opacity 0.3s ease-out 0.1s;
       }
 
       /* library: full-bleed two-pane (rail on --bg, main on --surface) */
@@ -1963,18 +2137,12 @@
         font-size: 12.5px;
         color: var(--faint);
       }
-      .descmeta .name {
-        font-family: var(--mono);
-        font-size: 11.5px;
-        color: var(--dim);
-        background: var(--panel);
-        padding: 3px 8px;
-        border-radius: 6px;
-      }
       .desc {
         color: var(--dim);
         max-width: 72ch;
-        margin: 0 0 26px;
+        /* Symmetric top/bottom so the gap to the taxonomy chips above and to the
+           metadata below reads as one rhythm, not two different sizes. */
+        margin: 16px 0;
         font-size: 14.5px;
         line-height: 1.62;
       }
@@ -2154,7 +2322,7 @@
       }
       .statusrail {
         border-left: 1px solid var(--line);
-        background: var(--panel);
+        background: var(--surface);
         overflow-y: auto;
         padding: 22px 22px 40px;
       }
@@ -2290,14 +2458,23 @@
       .plan .fmbox .k {
         color: var(--faint);
       }
+      .plan .fmbox .c {
+        color: var(--faint);
+        opacity: 0.72;
+      }
       .plan .runrow {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 16px;
+        margin-top: 18px;
         font-size: 13px;
         color: var(--dim);
+      }
+      .plan .runrow .rl {
+        display: block;
+        margin-bottom: 9px;
+      }
+      .plan .runrow .rtchips {
+        display: flex;
         flex-wrap: wrap;
+        gap: 7px;
       }
       .newactions {
         display: flex;
@@ -2310,10 +2487,27 @@
         color: var(--faint);
         margin-left: auto;
       }
+      .field .req {
+        margin-left: 7px;
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0;
+        text-transform: none;
+        color: var(--warn);
+      }
+      #n-desccount {
+        font-variant-numeric: tabular-nums;
+      }
+      #n-desccount.ok {
+        color: var(--ok);
+      }
+      #n-desccount.warn {
+        color: var(--warn);
+      }
 
-      /* settings */
+      /* config */
       .setwrap {
-        max-width: 820px;
+        max-width: 1040px;
         margin: 0 auto;
         padding: 32px 26px 80px;
       }
@@ -2323,51 +2517,154 @@
         letter-spacing: -0.03em;
         margin: 0 0 26px;
       }
-      .setwrap .group {
+      /* config: settings console (rail + active pane) */
+      .console {
+        display: grid;
+        grid-template-columns: 200px 1fr;
+        gap: 26px;
+      }
+      /* config full-bleed: rail on --bg (full height) + a --surface pane whose
+         content lives in one centered column, matching the library/status
+         views' full-bleed shell so Config is no longer a narrow centered box. */
+      .configlayout {
+        display: grid;
+        grid-template-columns: 236px minmax(0, 1fr);
+      }
+      .setnav.cfgrail {
+        position: static;
+        top: auto;
+        align-self: stretch;
+        justify-self: stretch;
+        width: 100%;
+        min-height: 0;
+        overflow-y: auto;
+        background: var(--bg);
+        border-right: 1px solid var(--line);
+        padding: 20px 12px 28px;
+      }
+      .cfgmain {
+        min-height: 0;
+        min-width: 0;
+        overflow-y: auto;
+        background: var(--surface);
+        padding: 28px 36px 90px;
+      }
+      /* One content column, centered, same width on every pane so the box does
+         not resize when switching sections. Wide enough for the forms; the doc
+         panes fill it too (no tighter per-pane cap). */
+      .cfgcol {
+        max-width: 880px;
+        margin: 0 auto;
+      }
+      .cfgcol h1 {
+        font-size: 25px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        margin: 0 0 6px;
+      }
+      @media (max-width: 900px) {
+        .configlayout {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto 1fr;
+        }
+        .setnav.cfgrail {
+          align-self: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+      .setnav {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        position: sticky;
+        top: 70px;
+        align-self: start;
+      }
+      .setnav a {
+        font-size: 13.5px;
+        color: var(--dim);
+        padding: 8px 12px;
+        border-radius: 9px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .setnav a:hover {
+        background: var(--panel);
+      }
+      .setnav a.on {
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .setnav .tiny {
+        font-size: 10.5px;
+        color: var(--faint);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .setnav a.on .tiny {
+        color: var(--accent);
+      }
+      .setnav .sep {
+        height: 1px;
+        background: var(--line);
+        margin: 9px 6px;
+      }
+      .railref {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--faint);
+        font-weight: 700;
+        padding: 2px 12px 6px;
+      }
+      .panel {
+        background: var(--surface);
         border: 1px solid var(--line);
         border-radius: 14px;
-        background: var(--surface);
-        padding: 4px 20px;
-        margin-bottom: 20px;
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
       }
-      .setwrap .grouphead {
-        padding: 16px 0 4px;
+      .panel-h {
+        padding: 20px 24px 16px;
+        border-bottom: 1px solid var(--hair);
       }
-      .setwrap .grouphead h2 {
-        font-size: 14.5px;
-        font-weight: 650;
-        letter-spacing: -0.01em;
-        margin: 0 0 2px;
+      .panel-h h2 {
+        font-size: 17px;
       }
-      .setwrap .grouphead p {
-        font-size: 13px;
+      .panel-h p {
+        margin: 5px 0 0;
         color: var(--dim);
-        margin: 0;
+        font-size: 13.5px;
+        max-width: 66ch;
       }
       .srow {
         display: flex;
+        justify-content: space-between;
         align-items: center;
         gap: 20px;
-        padding: 15px 0;
-        border-top: 1px solid var(--hair);
+        padding: 15px 24px;
+        border-bottom: 1px solid var(--hair);
       }
-      .srow:first-of-type {
-        border-top: 0;
+      .srow:last-of-type {
+        border-bottom: 0;
       }
       .srow .lbl {
-        font-size: 14px;
+        font-size: 13.5px;
         font-weight: 550;
       }
       .srow .subv {
         font-size: 12.5px;
         color: var(--faint);
-        margin-top: 2px;
+        margin-top: 3px;
       }
       .srow .val {
-        margin-left: auto;
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
       }
       .srow .path {
         font-family: var(--mono);
@@ -2375,13 +2672,567 @@
         color: var(--dim);
       }
       .addrow {
-        padding: 14px 0 16px;
+        padding: 14px 24px;
+      }
+      /* The un-wrapped code viewer (loom.json / non-.md reference docs) sits as
+         a direct child of #doc-body. The direct-child combinator keeps this off
+         fenced code blocks inside a rendered .md doc (which are deeper). Font
+         matches the skill detail's Source view (12px). */
+      #doc-body > pre.code {
+        margin: 0;
+        padding: 20px 24px;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.65;
+        color: var(--prose);
+        overflow: auto;
+        white-space: pre;
+      }
+      /* Reference / loom.json pane: a Document | History toggle in the panel
+         header (same pattern as the skill detail's Rendered / Source). The
+         History view lists commits in the pane body; each expands its diff. */
+      .panel-h .ph-top {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .panel-h .ph-top h2 {
+        margin: 0 auto 0 0;
+      }
+      /* docrev + toggle group at the right; the shared .seg carries the exact
+         Rendered/Source look, so no per-toggle overrides. */
+      .panel-h .ph-top .seg {
+        margin-left: 0;
+      }
+      .docrev {
+        font-size: 12.5px;
+        color: var(--dim);
+      }
+      .dochistv {
+        padding: 4px 24px 24px;
+      }
+      #doc-body .dcommit {
+        padding: 13px 0;
         border-top: 1px solid var(--hair);
+        cursor: pointer;
+      }
+      #doc-body .dcommit:first-child {
+        border-top: 0;
+      }
+      #doc-body .dctop {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      #doc-body .dcommit .s {
+        font-size: 13.5px;
+        color: var(--fg);
+      }
+      #doc-body .dcommit .d {
+        font-size: 12px;
+        color: var(--dim);
+      }
+      #doc-body .seewhat {
+        color: var(--accent);
+      }
+      #doc-body .dcdiff {
+        margin-top: 10px;
+      }
+      /* the diff sits inside the pane already; drop the bordered box so it does
+         not read as a box-in-a-box. */
+      #doc-body .dcdiff pre.plain {
+        border: 0;
+        background: var(--panel);
+        font-size: 11.5px;
+      }
+      /* Scoped to .panel: the bare .doc class already styles the skill-
+         detail three-pane document column (padding 30px 52px 60px, see
+         line ~1055); that must stay untouched. Inside a Config panel the
+         narrower panel-consistent padding applies instead, via specificity
+         (not source order), so it can't drift if the file is reorganized. */
+      .panel .doc {
+        padding: 22px 26px;
+      }
+      /* Secondary-file frontmatter, rendered as a compact metadata card at the
+         top of the document (instead of a raw dim YAML blob). */
+      .fmcard {
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: var(--surface);
+        margin: 6px 0 18px;
+        overflow: hidden;
+      }
+      .fmcard .fh {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 14px;
+      }
+      /* Nested frontmatter value (recursive): indented sub-rows, no colored
+         side-border. Shared by the card and the detail rail. */
+      .fmsub {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        padding-left: 12px;
+        margin-top: 5px;
+      }
+      .fmsubrow {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        font-size: 12.5px;
+      }
+      .fmsubrow > .fmk {
+        flex: none;
+      }
+      .fmsubrow > .fmv {
+        min-width: 0;
+      }
+      /* a nested value stacks under its key instead of sitting beside it */
+      .fmsubrow.nested {
+        display: block;
+      }
+      /* Skill detail: taxonomy/status chips in the header. */
+      .detmeta {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        /* No bottom padding: the description's symmetric 16px top margin owns the
+           gap to the chips, matching the description-to-metadata gap below. */
+        padding: 10px 0 0;
+      }
+      /* Skill metadata, below the description in the main column. No divider, no
+         header: sources are bare chips, a waiver is a soft note, so it reads as
+         part of the document rather than a labelled panel. */
+      .skillmeta {
+        margin: 16px 0 20px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 11px;
+      }
+      .skillmeta .smchips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      /* Runtime flag (e.g. always-injected): an accent chip in relief, distinct
+         from the neutral source chips. */
+      .skillmeta .injchip {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--accent);
+        background: var(--accent-soft);
+        border-radius: 20px;
+        padding: 3px 10px;
+      }
+      /* Waiver = a soft note (accent-soft, rounded, no side-stripe): a documented
+         exception, present but not alarming. */
+      .skillmeta .smnote {
+        align-self: stretch;
+        background: var(--accent-soft);
+        border-radius: 10px;
+        padding: 11px 13px;
+      }
+      .skillmeta .smnk {
+        display: block;
+        margin-bottom: 5px;
+        font-family: var(--mono);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: var(--accent);
+        font-weight: 700;
+      }
+      .skillmeta .smnr {
+        margin: 0;
+        font-size: 12.5px;
+        color: var(--prose);
+        line-height: 1.55;
+        overflow-wrap: break-word;
+      }
+      .skillmeta .smline {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+        font-size: 12.5px;
+      }
+      .skillmeta .smline .smk {
+        flex: none;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--dim);
+      }
+      .skillmeta .smline .smv {
+        color: var(--fg);
+        overflow-wrap: anywhere;
+      }
+      .fmcard .ft {
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--faint);
+        font-weight: 700;
+      }
+      .fmcard .ffile {
+        margin-left: auto;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--dim);
+      }
+      .fmcard .fmrow {
+        display: grid;
+        grid-template-columns: 140px 1fr;
+        gap: 14px;
+        padding: 7px 14px;
+        align-items: baseline;
+      }
+      .fmcard .fmrow:last-child {
+        border-bottom: 0;
+      }
+      .fmcard .fmk {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--dim);
+      }
+      .fmcard .fmv {
+        font-size: 13px;
+        color: var(--fg);
+        overflow-wrap: break-word;
+      }
+      .fmcard .fmvdesc {
+        color: var(--prose);
+        font-size: 12.5px;
+        line-height: 1.55;
+      }
+      .fmcard .fmvmono {
+        font-family: var(--mono);
+        font-size: 12.5px;
+      }
+      .fmcard .chip,
+      .skillmeta .chip {
+        display: inline-block;
+        height: auto;
+        font-family: var(--mono);
+        font-size: 11px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        color: var(--dim);
+        border-radius: 20px;
+        padding: 2px 9px;
+        margin: 0 4px 4px 0;
+      }
+      /* chips in the metadata row use flex gap, not chip margins */
+      .skillmeta .smchips .chip {
+        margin: 0;
+      }
+      .fmcard .chip.model,
+      .skillmeta .chip.model {
+        background: var(--accent-soft);
+        color: var(--accent);
+        border-color: transparent;
+      }
+      .fmcard .chip.deny,
+      .skillmeta .chip.deny {
+        color: var(--err);
+        border-color: var(--err-soft);
       }
       .about {
         font-size: 12.5px;
         color: var(--faint);
-        margin-top: 6px;
+        margin-top: 22px;
+      }
+      @media (max-width: 900px) {
+        .console {
+          grid-template-columns: 1fr;
+        }
+        .setnav {
+          position: static;
+          flex-direction: row;
+          flex-wrap: wrap;
+        }
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12.5px;
+        padding: 0 10px;
+        /* Fixed height + border-box so a saved chip (span) and the dashed
+           "+ add" chip (an input, intrinsically taller) render identically. */
+        box-sizing: border-box;
+        height: 26px;
+        border: 1px solid transparent;
+        border-radius: 999px;
+        background: var(--panel);
+        color: var(--dim);
+      }
+      a.chip.fmlink,
+      .fmlink {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .fmlink:hover {
+        text-decoration: underline;
+      }
+      .chip.accent {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .chip.code {
+        font-family: var(--mono);
+        font-size: 11.5px;
+      }
+      button.chip {
+        appearance: none;
+        border: 0;
+        font: inherit;
+        cursor: pointer;
+      }
+      .x {
+        display: inline-flex;
+        appearance: none;
+        border: 0;
+        background: transparent;
+        font: inherit;
+        padding: 0;
+        cursor: pointer;
+        opacity: 0.45;
+        font-size: 13px;
+        line-height: 1;
+      }
+      .x:hover {
+        opacity: 1;
+        color: var(--err);
+      }
+      .chip.rm {
+        padding-right: 7px;
+      }
+      .chip.rm .x {
+        margin-left: 1px;
+      }
+      .chip.add {
+        width: 92px;
+        background: transparent;
+        border: 1px dashed var(--line);
+        color: var(--faint);
+        cursor: text;
+        font: inherit;
+        outline: none;
+      }
+      .chip.add::placeholder {
+        color: var(--faint);
+      }
+      .chip.add:focus {
+        border-color: var(--accent);
+        color: var(--fg);
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12.5px;
+      }
+      .pill .pd {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+      .pill.on {
+        color: var(--ok);
+      }
+      .pill.on .pd {
+        background: var(--ok);
+      }
+      .pill.off {
+        color: var(--faint);
+      }
+      .pill.off .pd {
+        background: var(--faint);
+      }
+      /* config: rules (editable form) */
+      .req-badge {
+        font-size: 9.5px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--accent);
+        border: 1px solid var(--accent-soft);
+        border-radius: 5px;
+        padding: 1px 5px;
+        text-transform: uppercase;
+      }
+      .edscroll .edrow {
+        display: grid;
+        grid-template-columns: 190px 1fr;
+        gap: 22px;
+        padding: 16px 24px;
+        border-bottom: 1px solid var(--hair);
+        align-items: start;
+      }
+      .edscroll .edrow:last-of-type {
+        border-bottom: 0;
+      }
+      .edk {
+        font-size: 13.5px;
+        font-weight: 550;
+      }
+      .edk .k2 {
+        display: block;
+        font-size: 11.5px;
+        color: var(--faint);
+        font-weight: 400;
+        margin-top: 2px;
+      }
+      .edv {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        align-items: center;
+      }
+      .num {
+        font: inherit;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        width: 62px;
+        text-align: center;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--fg);
+        border-radius: 7px;
+        padding: 4px 6px;
+        outline: none;
+      }
+      .num:focus {
+        border-color: var(--accent);
+      }
+      .rxlist {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        width: 100%;
+      }
+      .rxrow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .rxinput {
+        flex: 1;
+        font: inherit;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        padding: 6px 10px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--fg);
+        border-radius: 7px;
+        outline: none;
+      }
+      .rxinput::placeholder {
+        color: var(--faint);
+        font-family: inherit;
+      }
+      .rxinput:focus {
+        border-color: var(--accent);
+      }
+      .rxrow.rxbad .rxinput {
+        border-color: var(--err);
+        background: var(--err-soft);
+      }
+      .rxrow .x {
+        font-size: 14px;
+        flex: 0 0 auto;
+      }
+      .rxerr {
+        font-size: 11.5px;
+        color: var(--err);
+      }
+      .dockbar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 24px;
+        background: var(--panel);
+        border-top: 1px solid var(--line);
+      }
+      .dockbar .impact {
+        font-size: 13px;
+      }
+      .dockbar .spc {
+        flex: 1;
+      }
+      .btn.sm {
+        height: 28px;
+        font-size: 12px;
+        padding: 0 11px;
+        border-radius: 8px;
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+        box-shadow: none;
+      }
+      .btn:disabled:hover {
+        border-color: var(--line);
+      }
+      /* config: rules review (impact dry-run before writing loom.json) */
+      .rules-review {
+        padding: 20px 24px;
+      }
+      .rules-review .kicker {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--accent);
+        font-weight: 700;
+      }
+      .rules-review .imp-h {
+        font-size: 15px;
+        margin: 10px 0 0;
+      }
+      .imp-list {
+        margin: 12px 0 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .imp-item {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: baseline;
+        font-size: 13px;
+      }
+      .imp-item .mono {
+        font-family: var(--mono);
+        font-size: 12.5px;
+      }
+      .imp-item .why {
+        color: var(--dim);
+        font-size: 12.5px;
+      }
+      .imp-good {
+        color: var(--ok);
+        font-weight: 600;
+      }
+      .imp-empty {
+        color: var(--dim);
+        font-size: 13.5px;
+        margin: 10px 0 0;
+      }
+      .rr-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 14px;
+      }
+      .rr-note {
+        font-size: 11.5px;
+        color: var(--faint);
+        margin-left: 2px;
       }
 
       /* archived */
@@ -2409,10 +3260,20 @@
       }
 
       /* empty / first-run */
+      /* Center the hero + steps block in the viewport under the sticky header,
+         so an empty vault reads as a deliberate first-run screen, not a table
+         that failed to fill. */
+      main.emptyview {
+        min-height: calc(100vh - 55px);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding-block: 48px;
+      }
       .hero {
         max-width: 620px;
         margin: 0 auto;
-        padding: 84px 26px 40px;
+        padding: 0 26px 6px;
         text-align: center;
       }
       .hero .mark {
@@ -2511,6 +3372,23 @@
       .histhd .railh {
         padding: 0;
       }
+      /* The tracked filename sits next to "History" (mono, dim); margin-right
+         auto keeps it left-grouped and pushes the "Back" button to the right.
+         Empty (main SKILL.md) it collapses, restoring the plain History header. */
+      .hfname {
+        margin-right: auto;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--dim);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 62%;
+        min-width: 0;
+      }
+      .hfname:empty {
+        display: none;
+      }
       .histback {
         background: none;
         border: 0;
@@ -2552,7 +3430,7 @@
       <nav>
         <a data-go="skills" id="nav-skills">My skills</a>
         <a data-go="status" id="nav-status">Status</a>
-        <a data-go="settings" id="nav-settings">Settings</a>
+        <a data-go="config" id="nav-config">Config</a>
       </nav>
       <div class="hutils">
         <button
@@ -2598,6 +3476,7 @@
         </button>
       </div>
     </header>
+    <div id="navprog" aria-hidden="true"></div>
     <div id="app"></div>
     <dialog id="confirm">
       <h2 id="confirm-title"></h2>
@@ -2619,6 +3498,29 @@
       <div class="dialog-actions">
         <button id="prompt-no" class="btn">Cancel</button
         ><button id="prompt-yes" class="btn primary">OK</button>
+      </div>
+    </dialog>
+    <dialog id="renamebulk">
+      <h2 id="renamebulk-title">Rename skills</h2>
+      <div class="field-row">
+        <label class="field" for="rb-op">Pattern</label>
+        <select class="txt" id="rb-op">
+          <option value="add-prefix">Add prefix</option>
+          <option value="strip-prefix">Strip prefix</option>
+          <option value="replace">Find and replace</option>
+        </select>
+      </div>
+      <div class="field-row" id="rb-row-a">
+        <label class="field" for="rb-a" id="rb-label-a">Prefix</label>
+        <input class="txt" id="rb-a" />
+      </div>
+      <div class="field-row" id="rb-row-b" hidden>
+        <label class="field" for="rb-b">Replace with</label>
+        <input class="txt" id="rb-b" />
+      </div>
+      <div class="dialog-actions">
+        <button id="renamebulk-no" class="btn">Cancel</button>
+        <button id="renamebulk-yes" class="btn primary">Preview</button>
       </div>
     </dialog>
     <div id="toast"></div>
@@ -2682,15 +3584,22 @@
             yes = $("#confirm-yes"),
             no = $("#confirm-no");
           const done = (v) => {
-            dlg.close();
             yes.removeEventListener("click", oy);
             no.removeEventListener("click", on);
+            dlg.removeEventListener("close", oc);
+            dlg.close();
             resolve(v);
           };
           const oy = () => done(true),
             on = () => done(false);
+          // "close" fires as a queued task; see promptDialog for why we gate
+          // on dlg.open (only a genuine Esc/backdrop dismissal has it false).
+          const oc = () => {
+            if (!dlg.open) done(false);
+          };
           yes.addEventListener("click", oy);
           no.addEventListener("click", on);
+          dlg.addEventListener("close", oc);
           dlg.showModal();
         });
       }
@@ -2736,6 +3645,60 @@
           input.select();
         });
       }
+      // Collects a rename pattern transform for a multi-select. Resolves to
+      // { op, value } | { op, from, to } or null on cancel. The label of the first
+      // field and the visibility of the second track the chosen op.
+      function renameTransformDialog(count) {
+        return new Promise((resolve) => {
+          const dlg = $("#renamebulk"),
+            op = $("#rb-op"),
+            a = $("#rb-a"),
+            b = $("#rb-b"),
+            labelA = $("#rb-label-a"),
+            rowB = $("#rb-row-b"),
+            yes = $("#renamebulk-yes"),
+            no = $("#renamebulk-no");
+          $("#renamebulk-title").textContent = `Rename ${count} skills`;
+          a.value = "";
+          b.value = "";
+          const sync = () => {
+            const isReplace = op.value === "replace";
+            labelA.textContent = isReplace
+              ? "Find"
+              : op.value === "strip-prefix"
+                ? "Prefix to strip"
+                : "Prefix";
+            rowB.hidden = !isReplace;
+          };
+          op.value = "add-prefix";
+          sync();
+          const done = (v) => {
+            op.removeEventListener("change", sync);
+            yes.removeEventListener("click", oy);
+            no.removeEventListener("click", on);
+            dlg.removeEventListener("close", oc);
+            dlg.close();
+            resolve(v);
+          };
+          const oy = () => {
+            if (op.value === "replace")
+              done({ op: "replace", from: a.value, to: b.value });
+            else done({ op: op.value, value: a.value });
+          };
+          const on = () => done(null);
+          // "close" fires as a queued task; see promptDialog for why we gate
+          // on dlg.open (only a genuine Esc/backdrop dismissal has it false).
+          const oc = () => {
+            if (!dlg.open) done(null);
+          };
+          op.addEventListener("change", sync);
+          yes.addEventListener("click", oy);
+          no.addEventListener("click", on);
+          dlg.addEventListener("close", oc);
+          dlg.showModal();
+          a.focus();
+        });
+      }
       function fmtWhen(iso) {
         if (!iso) return "";
         const d = new Date(iso + "T00:00:00");
@@ -2755,7 +3718,7 @@
       // Humanize a kebab value/path. Word casing comes from state.names (built-in
       // acronyms/proper nouns merged with the vault's loom.json `names` map);
       // otherwise sentence case: first word capitalized, the rest lowercase.
-      function humanCat(cat) {
+      function humanTax(cat) {
         if (cat === "." || cat === "") return "Other";
         const names = (state && state.names) || {};
         return cat
@@ -2774,23 +3737,13 @@
           )
           .join(" / ");
       }
-      function catOf(s) {
-        return s.rel.includes("/")
-          ? s.rel.split("/").slice(0, -1).join("/")
-          : ".";
-      }
-      // Category accent: a stable hue derived from the category name, from a
-      // palette kept clear of the state hues (green 160 / amber 68 / red 25).
-      const CAT_HUES = [212, 235, 260, 285, 305, 328, 348, 192];
-      function catHash(s) {
+      // Taxonomy hue palette, kept clear of the state hues (green 160 / amber 68
+      // / red 25). Drives the domain/layer accents via taxHueStyle.
+      const TAX_HUES = [212, 235, 260, 285, 305, 328, 348, 192];
+      function hueHash(s) {
         let h = 0;
         for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
         return h;
-      }
-      function catStyle(raw) {
-        const key = (raw || "other").split("/")[0];
-        const hue = CAT_HUES[catHash(key) % CAT_HUES.length];
-        return `--cat:oklch(59% 0.135 ${hue});--cat-soft:oklch(59% 0.135 ${hue} / 0.16)`;
       }
       // Taxonomy hue: rank-based over the axis's distinct values (sorted), so up
       // to 8 values per axis get 8 DIFFERENT hues (hashing collides). The stride
@@ -2804,9 +3757,9 @@
         const i = vals.indexOf(value);
         const hue =
           i >= 0
-            ? CAT_HUES[(i * 3) % CAT_HUES.length]
-            : CAT_HUES[catHash(value || "other") % CAT_HUES.length];
-        return `--cat:oklch(59% 0.135 ${hue});--cat-soft:oklch(59% 0.135 ${hue} / 0.16)`;
+            ? TAX_HUES[(i * 3) % TAX_HUES.length]
+            : TAX_HUES[hueHash(value || "other") % TAX_HUES.length];
+        return `--tint:oklch(59% 0.135 ${hue});--tint-soft:oklch(59% 0.135 ${hue} / 0.16)`;
       }
       // Single source of truth for library grouping + order. renderLibrary and
       // libraryOrder (detail arrow-nav) BOTH consume this, so they cannot drift.
@@ -2823,9 +3776,9 @@
             ? "domain"
             : null;
       }
-      function groupedSkills() {
+      function groupedSkills(skills) {
         const groups = new Map();
-        for (const s of state.skills || []) {
+        for (const s of skills || libSkills()) {
           const k = groupKeyOf(s);
           if (!groups.has(k)) groups.set(k, []);
           groups.get(k).push(s);
@@ -2842,7 +3795,7 @@
         return [...groups.entries()]
           .map(([key, items]) => ({
             key,
-            label: humanCat(key),
+            label: humanTax(key),
             items: items.sort(cmp),
           }))
           .sort((a, b) => a.label.localeCompare(b.label));
@@ -3051,7 +4004,7 @@
         const nm = (s.icon || "").trim();
         const col = namedColor(s.iconColor);
         const style = col
-          ? ` style="--cat:${col.c};--cat-soft:${col.soft}"`
+          ? ` style="--tint:${col.c};--tint-soft:${col.soft}"`
           : "";
         if (nm) {
           const inner = ICONS[nm] || ICONS.fallback;
@@ -3065,7 +4018,9 @@
         const nm = (s.icon || "").trim();
         const inner = nm ? ICONS[nm] || ICONS.fallback : ICONS.fallback;
         const col = namedColor(s.iconColor);
-        const style = col ? `color:${col.c}` : catStyle(catOf(s));
+        // Colour only follows an explicit icon-color; otherwise the glyph uses
+        // the neutral default (the vault is flat — no category tint).
+        const style = col ? `color:${col.c}` : "";
         return `<span class="fic" style="${style}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg></span>`;
       }
       function fmtSize(n) {
@@ -3090,6 +4045,21 @@
                 ? "script"
                 : "text";
         return `<span class="fic">${FILEICONS[t]}</span>`;
+      }
+      // Runtime/consumer label: apply the shared casing map (OpenClaw, GitHub,
+      // …) from state.names, title-casing any remaining words. Keeps consumer
+      // names consistent with server-humanized skill titles.
+      function rtName(name) {
+        const names = (state && state.names) || {};
+        return String(name)
+          .split("-")
+          .map((w) => {
+            const lw = w.toLowerCase();
+            return names[lw] !== undefined
+              ? names[lw]
+              : w.charAt(0).toUpperCase() + w.slice(1);
+          })
+          .join(" ");
       }
       function cap(s) {
         return s.charAt(0).toUpperCase() + s.slice(1);
@@ -3117,26 +4087,72 @@
           curView === "skills" ||
             curView === "detail" ||
             curView === "archived" ||
-            curView === "new",
+            curView === "new" ||
+            curView === "empty",
         );
         $("#nav-status").classList.toggle("on", curView === "status");
-        $("#nav-settings").classList.toggle("on", curView === "settings");
+        $("#nav-config").classList.toggle("on", curView === "config");
       }
       function go(view, arg) {
         // Rendered/Source persists while navigating between skills in the
         // detail view; it resets to Rendered when you re-enter from a list.
         if (view === "detail" && curView !== "detail") viewMode = "rendered";
+        if (view === "config" && curView !== "config") configPane = "rules";
         curView = view;
         if (view !== "detail") current = null;
         render(arg);
       }
+      // Each navigation bumps navSeq. Async views (which await a fetch before
+      // painting) capture it and bail if a newer navigation started meanwhile,
+      // so a slow render can never overwrite a fresher view.
+      let navSeq = 0;
+      let lastView = null;
+      function navStart() {
+        const p = $("#navprog");
+        if (!p) return;
+        p.classList.remove("done", "loading");
+        // Snap to width 0 with no transition, then start the fill. Without this,
+        // a fast previous nav can leave the bar near 100%, and the base 0.2s
+        // width transition would animate the reset from that high value, so
+        // .loading then runs backwards (right to left) before completing.
+        p.style.transition = "none";
+        p.style.width = "0";
+        void p.offsetWidth; // commit the 0-width, transition-less state
+        p.style.transition = "";
+        p.classList.add("loading");
+      }
+      function navStop() {
+        const p = $("#navprog");
+        if (!p || !p.classList.contains("loading")) return;
+        p.classList.remove("loading");
+        p.classList.add("done");
+      }
+      // True while the given nav is still the current one. Async renders call this
+      // after each await, before touching the DOM.
+      function navCurrent(seq) {
+        return seq == null || seq === navSeq;
+      }
       function render(arg) {
+        const seq = ++navSeq;
         updateNav();
-        if (curView === "skills") renderLibrary();
-        else if (curView === "detail") renderDetail(arg || current);
-        else if (curView === "status") renderStatus();
+        // Skip the view fade on a same-view refresh (data reload): only the
+        // content changes, the background stays put (no flash).
+        app().classList.toggle("norefade", curView === lastView);
+        lastView = curView;
+        const isAsync =
+          curView === "detail" || curView === "status" || curView === "config";
+        if (isAsync) navStart();
+        else navStop();
+        if (curView === "skills")
+          // An empty vault keeps the first-run hero on the My skills tab too,
+          // not a bare empty table. Archived mode still renders its own list.
+          (state.skills || []).length === 0 && !libArchived
+            ? renderEmpty()
+            : renderLibrary();
+        else if (curView === "detail") renderDetail(arg || current, seq);
+        else if (curView === "status") renderStatus(seq);
         else if (curView === "new") renderNew();
-        else if (curView === "settings") renderSettings();
+        else if (curView === "config") renderConfig(seq);
         else if (curView === "archived") renderArchived();
         else if (curView === "empty") renderEmpty();
       }
@@ -3144,10 +4160,16 @@
       /* ---------- library ---------- */
       let searchQ = "";
       let syncBannerDismissed = false;
-      let groupAxis = "domain"; // "domain" | "layer" | "none"
+      let groupAxis = "none"; // "none" | "domain" | "layer"
       let sortMode = "name"; // "name" | "axis" (orthogonal taxonomy axis) | "updated"
       let sortDir = 1; // 1 asc, -1 desc (toggled by ledger column headers)
       let libView = "list"; // "grid" | "list"
+      let libArchived = false; // library shows the archive instead of active skills
+      // The set the library renders: active vault skills, or archived ones as
+      // cards (same UI). All library machinery reads through this.
+      function libSkills() {
+        return libArchived ? archivedCards() : state.skills || [];
+      }
       let statusFilter = null; // null = all, else a status value
       let domainFilter = null; // null = all, else a domain value
       let layerFilter = null; // null = all, else a layer value
@@ -3157,7 +4179,7 @@
       let libSelName = null;
       function libHighlight(name) {
         libSelName = name;
-        const all = [...document.querySelectorAll("#groups .card")];
+        const all = [...document.querySelectorAll("#groups [data-skill]")];
         all.forEach((c) =>
           c.classList.toggle("kbsel", c.dataset.skill === name),
         );
@@ -3171,58 +4193,145 @@
           .querySelectorAll("#groups .card.kbsel")
           .forEach((c) => c.classList.remove("kbsel"));
       }
-      function libNav(key) {
-        const meta = [...document.querySelectorAll("#groups .card")]
-          .filter((c) => !c.hidden && c.offsetParent !== null)
-          .map((c) => {
-            const r = c.getBoundingClientRect();
-            return { c, top: Math.round(r.top), cx: r.left + r.width / 2 };
-          });
-        if (!meta.length) return;
-        const idx = meta.findIndex((m) => m.c.dataset.skill === libSelName);
-        if (idx < 0) return libHighlight(meta[0].c.dataset.skill);
-        if (key === "ArrowLeft")
-          return libHighlight(meta[Math.max(0, idx - 1)].c.dataset.skill);
-        if (key === "ArrowRight")
-          return libHighlight(
-            meta[Math.min(meta.length - 1, idx + 1)].c.dataset.skill,
+      // Multi-select for bulk actions (distinct from libSelName, the keyboard cursor).
+      let libSel = new Set();
+      let libSelAnchor = null;
+      // Set true when a marquee drag ends, to swallow the click it would emit.
+      let suppressClickOnce = false;
+      function libSelApply() {
+        document
+          .querySelectorAll("#groups [data-skill]")
+          .forEach((c) =>
+            c.classList.toggle("sel", libSel.has(c.dataset.skill)),
           );
-        // up/down: jump to the adjacent row, closest card in x
-        const cur = meta[idx];
-        const tops = [...new Set(meta.map((m) => m.top))].sort((a, b) => a - b);
-        const targetTop =
-          tops[tops.indexOf(cur.top) + (key === "ArrowDown" ? 1 : -1)];
-        if (targetTop === undefined) return;
-        let best = null;
-        for (const m of meta)
-          if (
-            m.top === targetTop &&
-            (!best || Math.abs(m.cx - cur.cx) < Math.abs(best.cx - cur.cx))
-          )
-            best = m;
-        if (best) libHighlight(best.c.dataset.skill);
       }
+      function libToggleSel(name) {
+        if (libSel.has(name)) libSel.delete(name);
+        else libSel.add(name);
+        libSelAnchor = name;
+        libSelApply();
+      }
+      // Contiguous range anchor..name (rebuilt each call, so Shift+arrow shrinks
+      // as well as grows and Shift+click reselects a clean range).
+      function libSelRange(name) {
+        const order = libraryOrder();
+        const a = order.indexOf(libSelAnchor ?? name);
+        const b = order.indexOf(name);
+        if (a < 0 || b < 0) return libToggleSel(name);
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        libSel = new Set(order.slice(lo, hi + 1));
+        libSelApply();
+      }
+      function libSelClear() {
+        libSel.clear();
+        libSelAnchor = null;
+        libSelApply();
+      }
+      // Visible [data-skill] elements in DOM order (grid cards AND list rows),
+      // excluding filtered-out/hidden ones. Shared by arrow-nav, select-all and
+      // marquee drag-select.
+      function libVisibleEls() {
+        return [...document.querySelectorAll("#groups [data-skill]")].filter(
+          (c) => !c.hidden && c.offsetParent !== null,
+        );
+      }
+      function libSelectAllVisible() {
+        const els = libVisibleEls();
+        const names = els.map((c) => c.dataset.skill);
+        libSel = new Set(names);
+        if (names.length) {
+          libSelAnchor = names[0];
+          // Put the cursor at the end (so a following Shift+arrow extends from
+          // there) but do NOT scroll — select-all stays in the current view.
+          libSelName = names[names.length - 1];
+          els.forEach((c) =>
+            c.classList.toggle("kbsel", c === els[els.length - 1]),
+          );
+        }
+        libSelApply();
+      }
+      // Arrow navigation drives the selection: a plain arrow moves a single-row
+      // selection cursor; Shift+arrow extends the multi-selection from the
+      // anchor. Works in both list (linear) and grid (spatial up/down) views.
+      function libNav(key, shift) {
+        const els = libVisibleEls();
+        if (!els.length) return;
+        const idx = els.findIndex((c) => c.dataset.skill === libSelName);
+        let ni;
+        if (idx < 0) {
+          ni = 0;
+        } else if (libView === "list") {
+          const step = key === "ArrowUp" || key === "ArrowLeft" ? -1 : 1;
+          ni = Math.min(els.length - 1, Math.max(0, idx + step));
+        } else if (key === "ArrowLeft") {
+          ni = Math.max(0, idx - 1);
+        } else if (key === "ArrowRight") {
+          ni = Math.min(els.length - 1, idx + 1);
+        } else {
+          // grid up/down: nearest card by x in the adjacent row
+          const meta = els.map((c) => {
+            const r = c.getBoundingClientRect();
+            return { top: Math.round(r.top), cx: r.left + r.width / 2 };
+          });
+          const cur = meta[idx];
+          const tops = [...new Set(meta.map((m) => m.top))].sort(
+            (a, b) => a - b,
+          );
+          const targetTop =
+            tops[tops.indexOf(cur.top) + (key === "ArrowDown" ? 1 : -1)];
+          if (targetTop === undefined) return;
+          ni = -1;
+          for (let i = 0; i < meta.length; i++)
+            if (
+              meta[i].top === targetTop &&
+              (ni < 0 ||
+                Math.abs(meta[i].cx - cur.cx) < Math.abs(meta[ni].cx - cur.cx))
+            )
+              ni = i;
+          if (ni < 0) return;
+        }
+        const name = els[ni].dataset.skill;
+        if (shift) {
+          if (libSelAnchor == null) libSelAnchor = libSelName || name;
+          libSelRange(name);
+        } else {
+          libSel = new Set([name]);
+          libSelAnchor = name;
+          libSelApply();
+        }
+        libHighlight(name);
+      }
+      const LIFECYCLE_LABEL = {
+        idea: "Idea",
+        draft: "Draft",
+        active: "Active",
+        suspended: "Suspended",
+        deprecated: "Deprecated",
+      };
       function statusLabel(s) {
-        return s === "active"
-          ? "Active"
-          : s === "suspended"
-            ? "Suspended"
-            : humanCat(s);
+        return LIFECYCLE_LABEL[s] || humanTax(s);
       }
       // Lifecycle chip, same filled style as the Links/Sync chips. The grid
       // stays exception-only (active shows nothing); the ledger passes
       // showActive to state every row.
+      const LIFECYCLE_CLS = {
+        idea: "off",
+        draft: "acc",
+        active: "ok",
+        suspended: "warn",
+        deprecated: "bad",
+      };
       function statusBadge(status, showActive) {
         const st = status || "active";
         if (st === "active")
           return showActive ? `<span class="badge ok">active</span>` : "";
-        const cls = st === "suspended" ? "warn" : "off";
+        const cls = LIFECYCLE_CLS[st] || "off";
         return `<span class="badge ${cls}">${esc(statusLabel(st).toLowerCase())}</span>`;
       }
       // Colored via taxHueStyle (rank-based per axis), so each domain/layer value
       // reads with its own hue at a glance and matches its section accent.
       function taxChip(axis, v) {
-        return `<span class="taxchip" style="${taxHueStyle(axis, v)}"><span class="tcdot"></span>${esc(humanCat(v))}</span>`;
+        return `<span class="taxchip" style="${taxHueStyle(axis, v)}"><span class="tcdot"></span>${esc(humanTax(v))}</span>`;
       }
       // Orthogonal axis chip(s): the axis you are NOT grouping by. "none" shows both.
       function orthChips(s) {
@@ -3251,24 +4360,37 @@
           chips || badges
             ? `<div class="foot"><span class="foot-l">${chips}</span><span class="foot-r">${badges}</span></div>`
             : "";
-        return `<a class="card" data-skill="${esc(s.name)}" data-hay="${esc(hay)}" data-domain="${esc(s.domain || "")}" data-layer="${esc(s.layer || "")}" data-status="${esc(s.status || "active")}" data-link="${esc(linkStateOf(s))}" data-sync="${esc(s.sync || "clean")}"><div class="top">${skillTile(s)}<div class="headwrap"><h3>${esc(s.title)}</h3></div><span class="when">${esc(fmtWhen(s.modified))}</span></div><p>${esc(s.description || "No description yet.")}</p>${foot}</a>`;
+        return `<a class="card${libSel.has(s.name) ? " sel" : ""}" data-skill="${esc(s.name)}" data-hay="${esc(hay)}" data-domain="${esc(s.domain || "")}" data-layer="${esc(s.layer || "")}" data-status="${esc(s.status || "active")}" data-link="${esc(linkStateOf(s))}" data-sync="${esc(s.sync || "clean")}"><span class="selbox" aria-hidden="true"></span><div class="top">${skillTile(s)}<div class="headwrap"><h3>${esc(s.title)}</h3></div><span class="when">${esc(fmtWhen(s.modified))}</span></div><p>${esc(s.description || "No description yet.")}</p>${foot}</a>`;
       }
       // Command rail: Group switch + Domain / Layer / Status lists with counts.
       // Counts are a snapshot of the whole vault, not of the current filter.
-      const STATUS_ORDER = ["active", "suspended"];
+      const STATUS_ORDER = [
+        "idea",
+        "draft",
+        "active",
+        "suspended",
+        "deprecated",
+      ];
       const STATUS_DOT = {
+        idea: "var(--faint)",
+        draft: "var(--accent)",
         active: "var(--ok)",
         suspended: "var(--warn)",
+        deprecated: "var(--err)",
       };
       function axisValues(axis) {
         return [
-          ...new Set((state.skills || []).map((s) => s[axis]).filter(Boolean)),
+          ...new Set(
+            libSkills()
+              .map((s) => s[axis])
+              .filter(Boolean),
+          ),
         ].sort();
       }
       function renderRailHtml() {
         const counts = (axis) => {
           const m = {};
-          for (const s of state.skills || []) {
+          for (const s of libSkills()) {
             const v = axis === "status" ? s.status || "active" : s[axis];
             if (v) m[v] = (m[v] || 0) + 1;
           }
@@ -3283,7 +4405,7 @@
         const sc = counts("status");
         const kc = {};
         const yc = {};
-        for (const sk of state.skills || []) {
+        for (const sk of libSkills()) {
           const k = linkStateOf(sk);
           kc[k] = (kc[k] || 0) + 1;
           const y = sk.sync || "clean";
@@ -3293,14 +4415,14 @@
           Object.keys(sc).filter((s) => !STATUS_ORDER.includes(s)),
         );
         return (
-          `<div class="rl">Group by</div><div class="seg" id="groupby">${seg("domain", "Domain")}${seg("layer", "Layer")}${seg("none", "None")}</div>` +
+          `<div class="rl">Group by</div><div class="seg" id="groupby">${seg("none", "None")}${seg("domain", "Domain")}${seg("layer", "Layer")}</div>` +
           `<div class="rl">Domain</div>` +
           axisValues("domain")
             .map((v) =>
               item(
                 "domain",
                 v,
-                humanCat(v),
+                humanTax(v),
                 dc[v],
                 domainFilter === v,
                 taxHueStyle("domain", v),
@@ -3313,7 +4435,7 @@
               item(
                 "layer",
                 v,
-                humanCat(v),
+                humanTax(v),
                 lc[v],
                 layerFilter === v,
                 taxHueStyle("layer", v),
@@ -3329,7 +4451,7 @@
                 statusLabel(v),
                 sc[v],
                 statusFilter === v,
-                `--cat:${STATUS_DOT[v] || "var(--dim)"}`,
+                `--tint:${STATUS_DOT[v] || "var(--dim)"}`,
               ),
             )
             .join("") +
@@ -3342,7 +4464,7 @@
                 cap(v),
                 kc[v],
                 linkFilter === v,
-                `--cat:${LINK_DOT[v]}`,
+                `--tint:${LINK_DOT[v]}`,
               ),
             )
             .join("") +
@@ -3355,7 +4477,7 @@
                 cap(SYNC_LABEL[v]),
                 yc[v],
                 syncFilter === v,
-                `--cat:${SYNC_DOT[v]}`,
+                `--tint:${SYNC_DOT[v]}`,
               ),
             )
             .join("")
@@ -3367,11 +4489,12 @@
         const states = (state.matrix || [])
           .filter((m) => m.skill === s.name)
           .map((m) => m.state);
-        if (states.length && states.every((x) => x === "linked"))
-          return "linked";
+        // "served" (in-place) covers a skill just like a symlink does.
+        const covered = (x) => x === "linked" || x === "served";
+        if (states.length && states.every(covered)) return "linked";
         if (states.some((x) => x === "foreign" || x === "broken"))
           return "conflict";
-        if (states.some((x) => x === "linked")) return "partial";
+        if (states.some(covered)) return "partial";
         return "not linked";
       }
       const LINK_ORDER = ["linked", "partial", "not linked", "conflict"];
@@ -3432,17 +4555,20 @@
             ? `<span class="arr">${sortDir > 0 ? "▲" : "▼"}</span>`
             : "";
         const head =
-          `<thead><tr><th data-sort="name">Skill ${arrow("name")}</th><th>Description</th>` +
+          `<thead><tr><th class="selcol"></th><th data-sort="name" style="width:19%">Skill ${arrow("name")}</th><th>Description</th>` +
           axisCols
-            .map((a) => `<th>${a === "layer" ? "Layer" : "Domain"}</th>`)
+            .map(
+              (a) =>
+                `<th style="width:11%">${a === "layer" ? "Layer" : "Domain"}</th>`,
+            )
             .join("") +
-          `<th>Status</th><th>Links</th><th>Sync</th><th data-sort="updated">Updated ${arrow("updated")}</th></tr></thead>`;
+          `<th style="width:9%">Status</th><th style="width:9%">Links</th><th style="width:9%">Sync</th><th data-sort="updated" style="width:10%">Updated ${arrow("updated")}</th></tr></thead>`;
         const bodies = groupedSkills()
           .map((g) => {
             const secRow =
               groupAxis === "none"
                 ? ""
-                : `<tr class="lsec"><td colspan="${6 + axisCols.length}"><span class="lsechead" style="${taxHueStyle(groupAxis, g.key)}"><span class="catdot"></span><h2>${esc(g.label)}</h2><span class="n">${g.items.length} skill${g.items.length === 1 ? "" : "s"}</span></span></td></tr>`;
+                : `<tr class="lsec"><td colspan="${7 + axisCols.length}"><span class="lsechead" style="${taxHueStyle(groupAxis, g.key)}"><span class="catdot"></span><h2>${esc(g.label)}</h2><span class="n">${g.items.length} skill${g.items.length === 1 ? "" : "s"}</span></span></td></tr>`;
             const rows = g.items
               .map((s) => {
                 const hay = (
@@ -3463,7 +4589,7 @@
                       : `<td class="lnone">–</td>`,
                   )
                   .join("");
-                return `<tr data-skill="${esc(s.name)}" data-hay="${esc(hay)}" data-domain="${esc(s.domain || "")}" data-layer="${esc(s.layer || "")}" data-status="${esc(s.status || "active")}" data-link="${esc(linkStateOf(s))}" data-sync="${esc(s.sync || "clean")}"><td><span class="lname">${skillTile(s)}${esc(s.title)}</span></td><td class="ldesc">${esc(s.description || "")}</td>${cells}<td>${statusBadge(s.status, true)}</td><td>${linkCell(s)}</td><td>${syncCell(s.sync)}</td><td class="lwhen">${esc(fmtWhen(s.modified))}</td></tr>`;
+                return `<tr class="${libSel.has(s.name) ? "sel" : ""}" data-skill="${esc(s.name)}" data-hay="${esc(hay)}" data-domain="${esc(s.domain || "")}" data-layer="${esc(s.layer || "")}" data-status="${esc(s.status || "active")}" data-link="${esc(linkStateOf(s))}" data-sync="${esc(s.sync || "clean")}"><td class="selcol"><span class="selbox" aria-hidden="true"></span></td><td><span class="lname">${skillTile(s)}${esc(s.title)}</span></td><td class="ldesc">${esc(s.description || "")}</td>${cells}<td>${statusBadge(s.status, true)}</td><td>${linkCell(s)}</td><td>${syncCell(s.sync)}</td><td class="lwhen">${esc(fmtWhen(s.modified))}</td></tr>`;
               })
               .join("");
             return `<tbody class="lgroup">${secRow}${rows}</tbody>`;
@@ -3497,9 +4623,14 @@
           );
         return `<div class="syncbanner"><span class="sbt"><b>Vault out of sync.</b> ${esc(parts.join(" · "))}.</span><span class="sba"><button class="btn primary" id="syncnow" type="button">Sync now</button><button class="btn" data-go="status" type="button">Review</button><button class="sbx" id="syncdismiss" type="button" aria-label="Dismiss">×</button></span></div>`;
       }
+      // "A", "A and B", "A, B and C" — commas, single trailing "and".
+      function listJoin(a) {
+        if (a.length <= 1) return a.join("");
+        return a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
+      }
       function renderLibrary() {
-        const consumers = Object.keys(state.consumers).map(cap).join(" and ");
-        const total = state.skills.length;
+        const consumers = listJoin(Object.keys(state.consumers).map(rtName));
+        const total = libSkills().length;
         let groupsHtml = "";
         if (libView === "list") {
           groupsHtml = renderTableHtml();
@@ -3522,7 +4653,7 @@
         app().innerHTML = `<div class="liblayout">
           <aside class="librail" id="librail">${renderRailHtml()}</aside>
           <main class="libmain">
-            <div class="libhead"><div><h1 class="view">Your skill library</h1><p class="sub">${total} skill${total === 1 ? "" : "s"}${consumers ? `, shared with ${esc(consumers)}` : ""}. <span id="syncnote"></span></p></div><button class="new" data-go="new">+ New skill</button></div>
+            <div class="libhead"><div><h1 class="view">${libArchived ? "Archived skills" : "Your skill library"}</h1><p class="sub">${libArchived ? `${total} skill${total === 1 ? "" : "s"} retired from every runtime. Open one to read it, then Restore to bring it back.` : `${total} skill${total === 1 ? "" : "s"}${consumers ? `, shared with ${esc(consumers)}` : ""}. <span id="syncnote"></span>`}</p></div>${libArchived ? "" : '<button class="new" data-go="new">+ New skill</button>'}</div>
             ${syncBannerHtml()}
             <div class="libbar">
               <div class="search">
@@ -3533,12 +4664,16 @@
             </div>
             <div id="groups">${groupsHtml}</div>
             <div id="noresult" class="empty" hidden></div>
-            ${archived.length ? `<button class="archivedlink" data-go="archived">Archived skills (${archived.length}) →</button>` : ""}
+            ${libArchived ? `<button class="archivedlink" id="back-active">← Active skills</button>` : archived.length ? `<button class="archivedlink" data-go="archived">Archived skills (${archived.length}) →</button>` : ""}
           </main>
         </div>`;
         $("#search").addEventListener("input", (e) => {
           searchQ = e.target.value;
           filterLibrary();
+        });
+        $("#back-active")?.addEventListener("click", () => {
+          libArchived = false;
+          go("skills");
         });
         if ($("#syncnow")) $("#syncnow").addEventListener("click", doSaveSync);
         if ($("#syncdismiss"))
@@ -3592,6 +4727,7 @@
           });
         filterLibrary();
         if (libSelName) libHighlight(libSelName);
+        libSelApply();
         renderSyncNote();
       }
       function filterLibrary() {
@@ -3618,15 +4754,20 @@
             sec.hidden = !vis;
             if (vis) anyVisible = true;
           });
+        const filtering = !!(
+          q ||
+          statusFilter ||
+          domainFilter ||
+          layerFilter ||
+          linkFilter ||
+          syncFilter
+        );
+        // On an empty result, hide the whole groups block (table header / cards)
+        // so only the message shows — full width, not an orphan header + box.
+        const groupsEl = $("#groups");
+        if (groupsEl) groupsEl.hidden = filtering && !anyVisible;
         const nr = $("#noresult");
         if (nr) {
-          const filtering =
-            q ||
-            statusFilter ||
-            domainFilter ||
-            layerFilter ||
-            linkFilter ||
-            syncFilter;
           nr.hidden = anyVisible || !filtering;
           nr.textContent = filtering ? "No skills match these filters." : "";
         }
@@ -3647,9 +4788,10 @@
 
       /* ---------- detail (three-pane) ---------- */
       // Last skill opened in detail — lets the "My skills" tab restore the
-      // detail after visiting Status/Settings (cleared on "← Your library").
+      // detail after visiting Status/Config (cleared on "← Your library").
       let lastDetail = null;
       function goSkillsTab() {
+        libArchived = false; // the My skills tab always lands on active skills
         if (
           lastDetail &&
           (state.skills || []).some((s) => s.name === lastDetail)
@@ -3657,25 +4799,32 @@
           go("detail", lastDetail);
         else go("skills");
       }
-      async function renderDetail(name) {
+      async function renderDetail(name, seq) {
         current = name;
         lastDetail = name;
         libSelName = name;
         const r = await api(`/api/skill?name=${encodeURIComponent(name)}`);
+        if (!navCurrent(seq)) return; // a newer navigation won the race
         if (!r.ok) {
           toast("skill not found");
           return go("skills");
         }
         const d = r.data;
-        const summary = (state.skills || []).find((s) => s.name === name) || {};
+        const arch = d.archived;
+        const summary =
+          (state.skills || []).find((s) => s.name === name) ||
+          (arch && (state.archived || []).find((x) => x.name === name)) ||
+          {};
         // Sibling rail follows the library: same taxonomy group as this skill
         // (per the active Group by axis) and the active rail filters. The open
         // skill itself always stays in the list.
         const groupKey = groupAxis === "none" ? null : groupKeyOf(summary);
         const cat =
-          groupAxis === "none" ? "All skills" : humanCat(groupKey || "");
+          groupAxis === "none" ? "All skills" : humanTax(groupKey || "");
         const order = libraryOrder();
-        const siblings = (state.skills || [])
+        // Siblings follow the current library set: archived siblings when
+        // browsing the archive, active ones otherwise.
+        const siblings = libSkills()
           .filter(
             (s) =>
               s.name === name ||
@@ -3718,13 +4867,46 @@
         const sibHtml = siblings.length
           ? `<div class="railbottom"><p class="railh nav">${esc(cat)} · ${siblings.length}</p>${siblings.map((s) => `<div class="file plain${s.name === name ? " sel" : ""}" data-skill="${esc(s.name)}">${railIcon(s)}<span>${esc(s.title)}</span></div>`).join("")}</div>`
           : "";
-        const togglesHtml = d.states
-          .map(
-            (st) =>
-              `<div class="rt"><span class="who">${esc(cap(st.consumer))}</span><button class="switch${st.state === "linked" ? " on" : ""}" data-toggle="${esc(st.consumer)}" title="${st.state}"></button></div>`,
-          )
-          .join("");
+        const rtRow = (name, on, attrs) =>
+          `<div class="rt"><span class="who">${esc(rtName(name))}</span><button class="switch${on ? " on" : ""}" ${attrs}></button></div>`;
+        // A suspended skill isn't in the matrix (d.states empty). Its coverage is
+        // still deterministic and read-only: an in-place consumer keeps serving it
+        // from the vault, symlink consumers don't link it. Show that honestly
+        // rather than an empty "Active on".
+        const togglesHtml = d.states.length
+          ? d.states
+              .map((st) => {
+                const cv = state.consumers[st.consumer];
+                const isInplace =
+                  cv && typeof cv === "object" && cv.mode === "in-place";
+                const on = st.state === "linked" || st.state === "served";
+                let attrs;
+                if (isInplace && cv.servedVia) {
+                  // Live in-place consumer: click activates/deactivates it (edits
+                  // the runtime's config array), like the Config toggle.
+                  attrs = `data-inplace="${esc(st.consumer)}" title="${on ? "served in place — click to deactivate (edits the runtime config; reload to apply)" : "inactive — click to activate"}"`;
+                } else if (isInplace) {
+                  attrs =
+                    'disabled title="served in place — read straight from the vault, no link to toggle"';
+                } else {
+                  attrs = `data-toggle="${esc(st.consumer)}" title="${st.state}"`;
+                }
+                return rtRow(st.consumer, on, attrs);
+              })
+              .join("")
+          : Object.keys(state.consumers)
+              .map((c) => {
+                const cv = state.consumers[c];
+                const isInplace =
+                  cv && typeof cv === "object" && cv.mode === "in-place";
+                const title = isInplace
+                  ? "served in place — still read from the vault while suspended"
+                  : "not linked — suspended skills aren't projected to symlink runtimes";
+                return rtRow(c, isInplace, `disabled title="${title}"`);
+              })
+              .join("");
         setFixed(true);
+        navStop();
         app().innerHTML = `<div class="layout">
           <aside class="rail">
             <button class="crumb" data-go="skills">← Your library</button>
@@ -3738,25 +4920,33 @@
             <div class="dochead">
               ${skillTile(summary)}
               <h1>${esc(summary.title || d.name)}</h1>
-              ${healthBadge(summary.health || "inactive", summary.health === "active" ? "Active everywhere" : undefined)}
-              <span class="acts"><button class="btn" id="d-rename">Rename</button><button class="btn danger" id="d-archive">Archive…</button></span>
+              ${arch ? '<span class="badge off">Archived</span>' : healthBadge(summary.health || "inactive", summary.health === "active" ? "Active everywhere" : undefined)}
+              <span class="acts">${arch ? '<button class="btn primary" id="d-restore">Restore</button>' : '<button class="btn" id="d-rename">Rename</button><button class="btn danger" id="d-archive">Archive</button>'}</span>
             </div>
-            <div class="descmeta"><span class="name">${esc(d.name)}</span><span>updated ${esc(fmtWhen(summary.modified || ""))}</span></div>
+            <div class="descmeta"><span>updated ${esc(fmtWhen(summary.modified || ""))}</span></div>
+            ${arch ? "" : detMetaHtml(summary)}
             ${d.description ? `<p class="desc">${esc(d.description)}</p>` : ""}
+            ${arch ? "" : skillMetaHtml(d.frontmatter)}
+            ${arch && d.reason ? `<p class="desc" style="color:var(--dim)"><b>Archived:</b> ${esc(d.reason)}</p>` : ""}
             <div class="viewerbar" id="viewerbar"><span class="fname" id="fname"></span><span class="seg vhide" id="seg"><b data-mode="rendered">Rendered</b><span data-mode="source">Source</span></span></div>
             <div id="viewer"></div>
           </main>
           <aside class="meta">
-            <div class="sect"><p class="railh" style="padding:0 0 8px">Active on</p>${togglesHtml}</div>
+            <div class="sect"><p class="railh" style="padding:0 0 8px">Active on</p>${arch ? '<p class="rmeta">Archived — not on any runtime.</p>' : togglesHtml}</div>
             <div class="histhd">
               <span class="railh">History</span>
+              <span class="hfname" id="histfname"></span>
               <button class="histback" id="hist-back" hidden></button>
             </div>
             <div id="history"></div>
           </aside>
         </div>`;
-        $("#d-rename").addEventListener("click", () => doRename(name));
-        $("#d-archive").addEventListener("click", () => doArchive(name));
+        if (arch) {
+          $("#d-restore")?.addEventListener("click", () => doRestore(name));
+        } else {
+          $("#d-rename")?.addEventListener("click", () => doRename(name));
+          $("#d-archive")?.addEventListener("click", () => doArchive(name));
+        }
         // keep the current skill visible in the pinned rail list
         document
           .querySelector(".railbottom .file.plain.sel")
@@ -3764,8 +4954,10 @@
         const first = d.files.find((f) => f.path === "SKILL.md")
           ? "SKILL.md"
           : d.files[0] && d.files[0].path;
+        // selectFile scopes the history to whatever file it opens; the fallback
+        // covers a skill with no files (never happens: SKILL.md always exists).
         if (first) await selectFile(first);
-        renderHistory(name);
+        else renderHistory(name, "SKILL.md");
       }
       async function selectFile(p) {
         currentFile = p;
@@ -3782,6 +4974,9 @@
           if (on) b.scrollIntoView({ block: "nearest" });
         });
         $("#fname").textContent = p;
+        // Scope the history rail to this file (git log of the file, not the
+        // whole skill), so selecting live-state.md shows live-state.md's history.
+        renderHistory(current, p);
         const r = await api(
           `/api/file?name=${encodeURIComponent(current)}&path=${encodeURIComponent(p)}`,
         );
@@ -3796,6 +4991,24 @@
         $("#seg").classList.toggle("vhide", !isMd);
         if (isMd) setMode(viewMode);
         else renderPlain();
+        scrollViewerTop();
+      }
+      // When switching files, bring the content column back to the top so each
+      // file starts from its beginning, not the previous scroll position.
+      function scrollViewerTop() {
+        let el = $("#viewer");
+        while (el && el !== document.body) {
+          const oy = getComputedStyle(el).overflowY;
+          if (
+            (oy === "auto" || oy === "scroll") &&
+            el.scrollHeight > el.clientHeight
+          ) {
+            el.scrollTop = 0;
+            return;
+          }
+          el = el.parentElement;
+        }
+        window.scrollTo(0, 0);
       }
       function setMode(m) {
         viewMode = m;
@@ -3805,10 +5018,16 @@
             ? `<b data-mode="${b.dataset.mode}">${b.textContent}</b>`
             : `<span data-mode="${b.dataset.mode}">${b.textContent}</span>`;
         });
-        if (m === "rendered")
+        if (m === "rendered") {
+          const skillTitle =
+            (
+              (state.skills || []).find((s) => s.name === current) ||
+              (state.archived || []).find((s) => s.name === current) ||
+              {}
+            ).title || current;
           $("#viewer").innerHTML =
-            `<article class="md doc">${renderMd(currentFileData.content, currentFile !== "SKILL.md")}</article>`;
-        else renderPlain();
+            `<article class="md doc">${renderMd(currentFileData.content, currentFile !== "SKILL.md", currentFile, skillTitle)}</article>`;
+        } else renderPlain();
       }
       function renderPlain() {
         const d = currentFileData;
@@ -3823,11 +5042,22 @@
           return;
         }
         const ext = (currentFile || "").split(".").pop().toLowerCase();
+        // .txt is the one source shown as code but wrapped (long prose lines read
+        // without a horizontal scrollbar); every other source stays verbatim.
+        const wrap = ext === "txt" ? " wrap" : "";
         $("#viewer").innerHTML =
-          `<pre class="plain code">${highlight(d.content, LANG_BY_EXT[ext])}</pre>`;
+          `<pre class="plain code${wrap}">${highlight(d.content, LANG_BY_EXT[ext])}</pre>`;
       }
-      async function renderHistory(name) {
-        const r = await api(`/api/history?name=${encodeURIComponent(name)}`);
+      async function renderHistory(name, filePath) {
+        // The header names the tracked file when it isn't the main SKILL.md, so
+        // it's clear the commits below belong to that file, not the whole skill.
+        const hf = $("#histfname");
+        if (hf)
+          hf.textContent = filePath && filePath !== "SKILL.md" ? filePath : "";
+        const q = filePath ? `&path=${encodeURIComponent(filePath)}` : "";
+        const r = await api(
+          `/api/history?name=${encodeURIComponent(name)}${q}`,
+        );
         const box = $("#history");
         if (!box) return;
         if (!r.data.versioned) {
@@ -3852,7 +5082,7 @@
             c.classList.toggle("sel", c.dataset.hashOpen === hash),
           );
         const r = await api(
-          `/api/commit?name=${encodeURIComponent(current)}&hash=${encodeURIComponent(hash)}`,
+          `/api/commit?name=${encodeURIComponent(current)}&hash=${encodeURIComponent(hash)}&path=${encodeURIComponent(currentFile || "")}`,
         );
         if (!r.ok) return toast(r.data.error || "cannot load commit");
         // keep the viewerbar in place (no layout shift): show the commit id in
@@ -3912,9 +5142,10 @@
         Removed: "warn",
         Renamed: "off",
       };
-      async function renderStatus() {
+      async function renderStatus(seq) {
         const diffR = (await api("/api/diff")).data;
         sync = (await api("/api/sync")).data;
+        if (!navCurrent(seq)) return; // a newer navigation won the race
         const consumers = Object.keys(state.consumers);
         const brokenForeign = state.matrix.filter(
           (m) => m.state === "broken" || m.state === "foreign",
@@ -3946,11 +5177,9 @@
               const rel = skill
                 ? file.slice(skill.rel.length + 1) || "SKILL.md"
                 : file;
-              const rowTitle = skill
-                ? skill.title
-                : file === "loom.json"
-                  ? "Vault settings"
-                  : file;
+              // Config files (loom.json, CONVENTIONS.md, source-registry.yaml)
+              // show their real filename, like every other non-skill file.
+              const rowTitle = skill ? skill.title : file;
               const diffText = dmap[file];
               const body = diffText
                 ? `<pre class="plain">${colorDiff(diffText)}</pre>`
@@ -3962,7 +5191,7 @@
         }
 
         // coverage table
-        let cov = `<tr><th>Skill</th>${consumers.map((c) => `<th>${esc(cap(c))}</th>`).join("")}<th>Updated</th></tr>`;
+        let cov = `<tr><th>Skill</th>${consumers.map((c) => `<th>${esc(rtName(c))}</th>`).join("")}<th>Updated</th></tr>`;
         for (const s of state.skills) {
           cov +=
             `<tr><td class="mono">${esc(s.name)}</td>` +
@@ -3971,17 +5200,30 @@
                 const cell = state.matrix.find(
                   (m) => m.skill === s.name && m.consumer === c,
                 );
-                const st = cell ? cell.state : "?";
+                // Suspended skills aren't in the matrix (they don't count toward
+                // health), but their coverage is deterministic: an in-place
+                // consumer still serves them from the vault; a symlink consumer
+                // doesn't link them. Show that honestly instead of a bare "?".
+                const cv = state.consumers[c];
+                const isInplace =
+                  cv && typeof cv === "object" && cv.mode === "in-place";
+                const st = cell ? cell.state : isInplace ? "served" : "missing";
                 const cls =
-                  st === "linked" ? "ok" : st === "missing" ? "off" : "bad";
+                  st === "linked" || st === "served"
+                    ? "ok"
+                    : st === "missing"
+                      ? "off"
+                      : "bad";
                 const word =
                   st === "linked"
                     ? "linked"
-                    : st === "missing"
-                      ? "not linked"
-                      : st === "foreign"
-                        ? "conflict"
-                        : st;
+                    : st === "served"
+                      ? "served"
+                      : st === "missing"
+                        ? "not linked"
+                        : st === "foreign"
+                          ? "conflict"
+                          : st;
                 return `<td class="cst"><span class="badge ${cls}">${esc(word)}</span></td>`;
               })
               .join("") +
@@ -4003,6 +5245,27 @@
           )
           .join("");
         const taxHtml = `<section class="coverage"><div class="covhead"><h2>Taxonomy</h2><span class="cnt">${state.skills.length} skills · by lifecycle status</span></div><table class="grid"><tr><th>Status</th><th>Count</th></tr>${statusRows}</table>${untagged.length ? `<div class="taxmiss"><span class="badge warn">Missing taxonomy</span> ${untagged.length} skill${untagged.length === 1 ? "" : "s"} without domain or layer: ${untagged.map((s) => `<span class="mono">${esc(s.name)}</span>`).join(", ")}</div>` : ""}</section>`;
+
+        // hygiene findings — advisory (H1 drift, machine paths, opt-in lint)
+        const KIND_WORD = {
+          "h1-mismatch": "H1 ≠ name",
+          "absolute-path": "machine path",
+          "description-length": "description too long",
+          "body-length": "body too long",
+          "missing-section": "missing section",
+          "missing-taxonomy": "missing taxonomy",
+          "unknown-domain": "unknown domain",
+          "unknown-layer": "unknown layer",
+        };
+        const warnings = state.warnings || [];
+        const hygieneHtml = warnings.length
+          ? `<section class="coverage"><div class="covhead"><h2>Hygiene</h2><span class="cnt">${warnings.length} advisory finding${warnings.length === 1 ? "" : "s"} · never block linking</span></div><table class="grid"><tr><th>Skill</th><th>Finding</th><th>Detail</th></tr>${warnings
+              .map(
+                (w) =>
+                  `<tr><td class="mono">${esc(w.name)}</td><td><span class="badge warn">${esc(KIND_WORD[w.kind] || w.kind)}</span></td><td class="awhen">${esc(w.detail)}</td></tr>`,
+              )
+              .join("")}</table></section>`
+          : "";
 
         // rail verdict
         let verdict,
@@ -4031,7 +5294,7 @@
         if (issues > 0) {
           const first = brokenForeign[0];
           const line = first
-            ? `<b>${esc(cap(first.consumer))}</b> has a ${first.state} copy of <b>${esc(first.skill)}</b>. skill-loom never overwrites files, so this one is on you.`
+            ? `<b>${esc(rtName(first.consumer))}</b> has a ${first.state} copy of <b>${esc(first.skill)}</b>. skill-loom never overwrites files, so this one is on you.`
             : `${state.problems.length + state.orphans.length} vault issue(s) to resolve.`;
           linksBlock = `<div class="rblock"><p class="rh">Runtime links</p><p class="rline">${line}</p><button class="btn full" id="fixlinks">Fix links</button></div>`;
         }
@@ -4073,11 +5336,12 @@
         setFixed(true);
         app().innerHTML = `<div class="statuslayout">
           <main class="review">
-            <div class="rvhead"><h1>Unsaved changes</h1><span class="count">${fileCount ? `${fileCount} file${fileCount === 1 ? "" : "s"}` : "nothing pending"}</span><span class="spacer"></span>${canSave ? `<button class="btn primary" id="savesync">Save &amp; sync</button>` : ""}</div>
+            <div class="rvhead"><h1>Unsaved changes</h1><span class="count">${fileCount ? `${fileCount} file${fileCount === 1 ? "" : "s"}` : "nothing pending"}</span><span class="spacer"></span>${canSave ? `<button class="btn primary" id="savesync">${sync.remote ? "Save &amp; sync" : "Save locally"}</button>` : ""}</div>
             <p class="rvsub">Edits your agents made since the last save. Review, then save them to the vault and push to your other machines.</p>
             ${changesHtml}
-            <section class="coverage"><div class="covhead"><h2>Runtime coverage</h2><span class="cnt">${state.skills.length} skills · ${consumers.map(cap).join(" & ")}</span></div><p class="covlegend"><b>linked</b> symlink to the vault · <b>not linked</b> nothing installed at the runtime path · <b>conflict</b> something that is not the vault's link owns that path; skill-loom never overwrites it</p><table class="grid">${cov}</table></section>
+            ${hygieneHtml}
             ${taxHtml}
+            <section class="coverage"><div class="covhead"><h2>Runtime coverage</h2><span class="cnt">${state.skills.length} skills · ${listJoin(consumers.map(rtName))}</span></div><p class="covlegend"><b>linked</b> symlink to the vault · <b>not linked</b> nothing installed at the runtime path · <b>conflict</b> something that is not the vault's link owns that path; skill-loom never overwrites it</p><table class="grid">${cov}</table></section>
           </main>
           <aside class="statusrail">
             <div class="rblock"><p class="rh">Vault health</p>${verdict}<div class="vsupport">${vitems}</div></div>
@@ -4085,6 +5349,7 @@
             <div class="rblock"><p class="rh">Machines</p>${machines}${sync.remote ? `<p class="rmeta">${esc(sync.remote)}</p>` : ""}</div>
           </aside>
         </div>`;
+        navStop();
         if ($("#savesync"))
           $("#savesync").addEventListener("click", doSaveSync);
         refreshStatusSyncLive();
@@ -4093,12 +5358,28 @@
       }
       async function doSaveSync() {
         const dry = await api("/api/sync", { apply: false });
+        // The vault's rules gate the save. Surface the problems and offer an
+        // explicit "commit anyway" (force) so a UI user is never dead-ended.
+        if (dry.data && dry.data.gate) {
+          const n = dry.data.gate.length;
+          const ok = await confirmActions(
+            `${n} rule problem${n === 1 ? "" : "s"} — fix, or commit anyway?`,
+            dry.data.gate,
+          );
+          if (!ok) return;
+          const forced = await api("/api/sync", { apply: true, force: true });
+          toast(forced.data.message || forced.data.error || "done");
+          await loadState();
+          return go("status");
+        }
         if (!dry.ok)
           return toast(dry.data.message || dry.data.error || "sync failed");
         if (!dry.data.actions || !dry.data.actions.length)
           return toast(dry.data.message || "already in sync");
-        if (!(await confirmActions("Save and sync now?", dry.data.actions)))
-          return;
+        const saveTitle = sync.remote
+          ? "Save and sync now?"
+          : "Save locally now?";
+        if (!(await confirmActions(saveTitle, dry.data.actions))) return;
         const wet = await api("/api/sync", { apply: true });
         toast(wet.data.message || wet.data.error || "done");
         await loadState();
@@ -4108,7 +5389,7 @@
         const r = await api("/api/consumers", { name, path: p });
         toast(
           r.ok
-            ? `${cap(name)} added. Use Fix links or link --apply to populate it.`
+            ? `${rtName(name)} added. Use Fix links or link --apply to populate it.`
             : r.data.error || "failed",
         );
         await loadState();
@@ -4181,12 +5462,49 @@
       /* ---------- new skill ---------- */
       function renderNew() {
         setFixed(false);
-        const cats = [
-          ...new Set(
-            (state.skills || []).map((s) => catOf(s)).filter((c) => c !== "."),
-          ),
-        ].sort();
         const consumers = Object.keys(state.consumers);
+        // The form mirrors the vault's rules (loom.json lint): show and require
+        // the taxonomy the vault demands, populate dropdowns from its allowed
+        // values, and scaffold the sections it requires — so a new skill is born
+        // gate-ready. A vault with no lint gets the plain name + description form.
+        const lint = state.lint || null;
+        const req = (lint && lint.requireTaxonomy) || [];
+        const domains = (lint && lint.allowedDomains) || [];
+        const layers = (lint && lint.allowedLayers) || [];
+        const needsDomain = req.includes("domain");
+        const needsLayer = req.includes("layer");
+        const showDomain = needsDomain || domains.length > 0;
+        const showLayer = needsLayer || layers.length > 0;
+        const showTaxo = showDomain || showLayer;
+        const sections = (lint && lint.requireSections) || [];
+        const minChars = lint && lint.descriptionMinChars;
+        const selField = (id, label, values, required, hint) =>
+          `<div class="field-row"><label class="field" for="${id}">${label}${required ? ' <span class="req">required</span>' : ""}</label>` +
+          (values.length
+            ? `<select class="txt" id="${id}"${required ? " required" : ""}><option value="">(choose)</option>${values.map((v) => `<option>${esc(v)}</option>`).join("")}</select>`
+            : `<input class="txt" id="${id}"${required ? " required" : ""} spellcheck="false" placeholder="${esc(label.toLowerCase())}" />`) +
+          `<p class="hint">${hint}</p></div>`;
+        const domainRow = showDomain
+          ? selField(
+              "n-domain",
+              "Domain",
+              domains,
+              needsDomain,
+              "Who the skill belongs to: a brand, a project.",
+            )
+          : "";
+        const layerRow = showLayer
+          ? selField(
+              "n-layer",
+              "Layer",
+              layers,
+              needsLayer,
+              "What kind of work it does.",
+            )
+          : "";
+        const statusRow = showTaxo
+          ? `<div class="field-row"><label class="field" for="n-status">Status</label><select class="txt" id="n-status">${STATUS_ORDER.map((v) => `<option value="${esc(v)}"${v === "draft" ? " selected" : ""}>${esc(statusLabel(v))}</option>`).join("")}</select><p class="hint">Lifecycle. New skills start as a draft.</p></div>`
+          : "";
         app().innerHTML = `<div class="newwrap">
           <button class="crumb" data-go="skills">← Your library</button>
           <h1>Create a new skill</h1>
@@ -4194,8 +5512,8 @@
           <div class="newgrid">
             <form id="newform">
               <div class="field-row"><label class="field" for="n-name">Name</label><input class="txt" id="n-name" placeholder="ai-act-readiness" pattern="[a-z0-9][a-z0-9-]*" spellcheck="false" required /><p class="hint">Lowercase, words joined by dashes. Folder name and the id agents match on. <span class="mono" id="n-slug"></span></p></div>
-              <div class="field-row"><label class="field" for="n-cat">Category</label><select class="txt" id="n-cat"><option value="">(none — flat)</option>${cats.map((c) => `<option>${esc(c)}</option>`).join("")}</select><p class="hint">Optional folder to group it under.</p></div>
-              <div class="field-row"><label class="field" for="n-desc">Description</label><textarea class="txt" id="n-desc" spellcheck="false" placeholder="When should an agent reach for this skill?"></textarea><p class="hint">This is what an agent reads to decide. One or two sentences.</p></div>
+              ${domainRow}${layerRow}${statusRow}
+              <div class="field-row"><label class="field" for="n-desc">Description</label><textarea class="txt" id="n-desc" spellcheck="false" placeholder="When should an agent reach for this skill?"></textarea><p class="hint">This is what an agent reads to decide.${minChars ? ` <span id="n-desccount" class="warn"></span>` : ""}</p></div>
               <div class="newactions"><button type="submit" class="btn primary">Create &amp; activate</button><button type="button" class="btn" data-go="skills">Cancel</button><span class="note">Shows a dry-run before anything is written.</span></div>
               <div id="n-out"></div>
             </form>
@@ -4203,19 +5521,44 @@
               <p class="rh" style="color:var(--dim)">This will create</p>
               <div class="tree" id="n-tree"></div>
               <div class="fmbox" id="n-fm"></div>
-              <div class="runrow"><span>Then activate on</span>${consumers.map((c) => `<span class="rtchip"><span class="d"></span>${esc(cap(c))}</span>`).join("")}</div>
+              <div class="runrow"><span class="rl">Then activate on</span><span class="rtchips">${consumers.map((c) => `<span class="rtchip"><span class="d"></span>${esc(rtName(c))}</span>`).join("")}</span></div>
             </aside>
           </div>
         </div>`;
         const upd = () => {
           const name = ($("#n-name").value || "").trim() || "your-skill";
-          const cat = $("#n-cat").value;
           const desc = ($("#n-desc").value || "").trim();
+          const domain = $("#n-domain") ? $("#n-domain").value.trim() : "";
+          const layer = $("#n-layer") ? $("#n-layer").value.trim() : "";
+          const status = $("#n-status") ? $("#n-status").value : "draft";
           $("#n-slug").textContent = name;
           $("#n-tree").innerHTML =
-            `skills-vault/\n${cat ? `└─ ${esc(cat)}/\n   └─ <span class="accent">${esc(name)}/</span>\n      └─ SKILL.md` : `└─ <span class="accent">${esc(name)}/</span>\n   └─ SKILL.md`}`;
-          $("#n-fm").innerHTML =
-            `<span class="k">---</span>\n<span class="k">name:</span> ${esc(name)}\n<span class="k">description:</span> ${esc(desc || "…")}\n<span class="k">---</span>`;
+            `skills-vault/\n└─ <span class="accent">${esc(name)}/</span>\n   └─ SKILL.md`;
+          let fm =
+            `<span class="k">---</span>\n` +
+            `<span class="k">name:</span> ${esc(name)}\n` +
+            `<span class="k">description:</span> ${esc(desc || "…")}\n`;
+          if (showDomain)
+            fm += `<span class="k">domain:</span> ${esc(domain || "…")}\n`;
+          if (showLayer)
+            fm += `<span class="k">layer:</span> ${esc(layer || "…")}\n`;
+          if (showTaxo)
+            fm += `<span class="k">status:</span> ${esc(status || "draft")}\n`;
+          else
+            fm += `<span class="c"># optional: domain / layer / status</span>\n`;
+          fm += `<span class="k">---</span>`;
+          if (sections.length)
+            fm +=
+              `\n<span class="c"># ${esc(name)}</span>\n` +
+              sections
+                .map((s) => `<span class="c">## ${esc(s)}</span>`)
+                .join("\n");
+          $("#n-fm").innerHTML = fm;
+          if (minChars && $("#n-desccount")) {
+            const n = desc.length;
+            $("#n-desccount").textContent = `${n} / min ${minChars}`;
+            $("#n-desccount").className = n >= minChars ? "ok" : "warn";
+          }
         };
         ["input", "change"].forEach((e) =>
           $("#newform").addEventListener(e, upd),
@@ -4227,8 +5570,14 @@
         e.preventDefault();
         const body = {
           name: $("#n-name").value.trim(),
-          category: $("#n-cat").value.trim() || undefined,
           description: $("#n-desc").value.trim() || undefined,
+          domain: $("#n-domain")
+            ? $("#n-domain").value.trim() || undefined
+            : undefined,
+          layer: $("#n-layer")
+            ? $("#n-layer").value.trim() || undefined
+            : undefined,
+          status: $("#n-status") ? $("#n-status").value : undefined,
         };
         const dry = await api("/api/add", { ...body, apply: false });
         if (!dry.ok) {
@@ -4253,95 +5602,780 @@
         go("detail", body.name);
       }
 
-      /* ---------- settings ---------- */
-      function renderSettings() {
-        setFixed(false);
-        const consumers = Object.entries(state.consumers).sort((a, b) =>
-          a[0].localeCompare(b[0]),
+      /* ---------- config ---------- */
+      /* ---------- config: rules pane (editable) ---------- */
+      // The rules the vault enforces, read from loom.json's lint block
+      // (already in state.lint) and edited as a local working copy
+      // (rulesDraft) before Task 6's Review-and-save flow sends it to
+      // /api/rules. Nothing is written to loom.json from this pane on a
+      // keystroke — only Discard (resets from state.lint) touches the
+      // draft here; the actual save lands in Task 6.
+      const RULES_TAXO_FIELDS = [
+        { key: "domain", label: "domain" },
+        { key: "layer", label: "layer" },
+      ];
+
+      // Canonical 9-field lint shape, in a fixed key order, built from
+      // either state.lint or a draft. Used both to seed rulesDraft and as
+      // the dirty-check comparison target. rulesDirty() compares
+      // JSON.stringify output, so this key order MUST stay exactly what
+      // initRulesDraft produces, or the dock bar shows up spuriously on
+      // first render.
+      function normalizedLint(l) {
+        l = l || {};
+        return {
+          requireTaxonomy: [...(l.requireTaxonomy || [])],
+          allowedDomains: [...(l.allowedDomains || [])].sort((a, b) =>
+            a.localeCompare(b),
+          ),
+          allowedLayers: [...(l.allowedLayers || [])].sort((a, b) =>
+            a.localeCompare(b),
+          ),
+          requireSections: [...(l.requireSections || [])].sort((a, b) =>
+            a.localeCompare(b),
+          ),
+          descriptionMinChars: l.descriptionMinChars ?? null,
+          descriptionMaxChars: l.descriptionMaxChars ?? null,
+          bodyMaxLines: l.bodyMaxLines ?? null,
+          forbidBodyPatterns: [...(l.forbidBodyPatterns || [])],
+          strict: l.strict === true,
+        };
+      }
+
+      // Working copy of the lint block while the Rules form is open. Null =
+      // not initialized yet; initRulesDraft() seeds it from state.lint via
+      // normalizedLint, so a fresh draft always starts identical to the
+      // server's copy (no spurious "unsaved edits" on load) since both
+      // sides run through the same key-ordering function.
+      let rulesDraft = null;
+      function initRulesDraft() {
+        rulesDraft = normalizedLint(state.lint);
+      }
+      function rulesDirty() {
+        return (
+          JSON.stringify(rulesDraft) !==
+          JSON.stringify(normalizedLint(state.lint))
         );
-        const presets = [...(state.presets || [])].sort((a, b) =>
-          a.name.localeCompare(b.name),
-        );
-        const versioned = sync && sync.versioned;
-        app().innerHTML = `<div class="setwrap">
-          <button class="crumb" data-go="skills">← Your library</button>
-          <h1>Settings</h1>
-          <div class="group">
-            <div class="grouphead"><h2>Vault</h2><p>The one canonical copy every runtime links back to.</p></div>
-            <div class="srow"><div><div class="lbl">Location</div><div class="subv">Move it from the command line; the config follows.</div></div><div class="val"><span class="path">${esc(state.vaultDir)}</span></div></div>
-            <div class="srow"><div><div class="lbl">Version control</div><div class="subv">Git tracks every edit and powers multi-machine sync.</div></div><div class="val">${versioned ? `<span class="badge ok">${CHECK}Versioned</span>` : `<span class="badge off">Not versioned</span>`}</div></div>
-          </div>
-          <div class="group">
-            <div class="grouphead"><h2>Runtimes</h2><p>Where skill-loom symlinks your skills. Turn one off to stop linking into it.</p></div>
-            ${consumers
-              .map(([name, p]) => {
-                const links = (state.matrix || []).filter(
-                  (m) => m.consumer === name,
-                );
-                const linked = links.filter((m) => m.state === "linked").length;
-                // on = fully linked; a partial runtime reads as off, and the
-                // next click links the missing skills instead of tearing
-                // everything down.
-                const full = links.length > 0 && linked === links.length;
-                const hint = full
-                  ? ""
-                  : linked > 0
-                    ? " — turn on to link the rest"
-                    : "";
-                return `<div class="srow"><div><div class="lbl">${esc(cap(name))}</div><div class="subv"><span class="path">${esc(p)}</span></div></div><div class="val"><button class="switch${full ? " on" : ""}" data-consumer="${esc(name)}" title="${linked} of ${links.length} skills linked${hint}"></button></div></div>`;
-              })
-              .join("")}
-            ${presets
+      }
+
+      // True while any forbidBodyPatterns entry (committed or mid-add)
+      // fails `new RegExp(...)`. Review and save stays disabled while this
+      // is true; the button's click handler itself is wired in Task 6.
+      let rulesRegexError = false;
+      // Uncommitted text sitting in the "+ add pattern" row, tracked
+      // outside the DOM so a re-render triggered by an unrelated edit
+      // (e.g. toggling strict while mid-type) doesn't drop it.
+      let rulesPatternAdd = "";
+
+      function isValidRegex(v) {
+        if (!v) return true; // empty is "not yet a pattern", not invalid
+        try {
+          new RegExp(v);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      function renderRulesDockbar() {
+        rulesRegexError =
+          (rulesDraft.forbidBodyPatterns || []).some((v) => !isValidRegex(v)) ||
+          !isValidRegex(rulesPatternAdd);
+        // Dirty alone misses one case: typing straight into the "+ add
+        // pattern" row (rulesPatternAdd lives outside rulesDraft, so it
+        // never flips rulesDirty()). Without this, an invalid regex typed
+        // from a clean vault would show the .rxbad row but no dock bar at
+        // all — "Review and save disabled" would have nothing to be
+        // observed on. A non-empty add-in-progress counts as unsaved too.
+        if (!rulesDirty() && !rulesPatternAdd.trim()) return "";
+        return `<div class="dockbar"><span class="impact">Unsaved edits.</span><span class="spc"></span><button class="btn sm" id="rules-discard">Discard</button><button class="btn primary sm" id="rules-review"${rulesRegexError ? " disabled" : ""}>Review and save</button></div>`;
+      }
+
+      function renderRulesForm() {
+        if (!rulesDraft) initRulesDraft();
+        const d = rulesDraft;
+
+        const taxoRow = RULES_TAXO_FIELDS.map(({ key, label }) => {
+          const on = d.requireTaxonomy.includes(key);
+          return `<button type="button" class="chip${on ? " accent" : ""}" data-rules-taxo="${key}">${esc(label)}${on ? ` <span class="req-badge">required</span>` : ""}</button>`;
+        }).join("");
+
+        const chipList = (field, opts) => {
+          const mono = opts && opts.mono;
+          const display = (opts && opts.display) || ((v) => v);
+          const values = d[field] || [];
+          return (
+            values
               .map(
-                (pr) =>
-                  `<div class="srow"><div><div class="lbl">${esc(cap(pr.name))} <span class="badge off" style="margin-left:6px">detected</span></div><div class="subv"><span class="path">${esc(pr.path)}</span></div></div><div class="val"><button class="btn" data-runtimepreset="${esc(pr.name)}" data-path="${esc(pr.path)}">Add</button></div></div>`,
+                (v) =>
+                  `<span class="chip rm${mono ? " code" : ""}">${esc(display(v))} <button type="button" class="x" data-rules-chip-rm="${field}" data-rules-chip-value="${esc(v)}">×</button></span>`,
               )
-              .join("")}
-            <div class="addrow"><button class="btn" data-runtimeadd="1">+ Add a runtime</button></div>
+              .join("") +
+            `<input class="chip add" type="text" placeholder="+ add" spellcheck="false" data-rules-chip-add="${field}" />`
+          );
+        };
+
+        const rxRows = (d.forbidBodyPatterns || [])
+          .map((v, i) => {
+            const bad = !isValidRegex(v);
+            return (
+              `<div class="rxrow${bad ? " rxbad" : ""}"><input class="rxinput" type="text" value="${esc(v)}" spellcheck="false" data-rules-rx-i="${i}" /><button type="button" class="x" data-rules-rx-rm="${i}">×</button></div>` +
+              (bad ? `<div class="rxerr">invalid regex, cannot save</div>` : "")
+            );
+          })
+          .join("");
+        const addBad = !isValidRegex(rulesPatternAdd);
+        const rxAddRow =
+          `<div class="rxrow add${addBad ? " rxbad" : ""}"><input class="rxinput" type="text" placeholder="+ add pattern" spellcheck="false" value="${esc(rulesPatternAdd)}" data-rules-rx-add /></div>` +
+          (addBad ? `<div class="rxerr">invalid regex, cannot save</div>` : "");
+
+        const strictOn = d.strict === true;
+
+        return `<div class="panel" id="rules-panel">
+          <div class="panel-h"><h2>Rules</h2><p>What every skill must satisfy. Saving rewrites the lint block in loom.json and re-arms the gate.</p></div>
+          <div class="edscroll">
+            <div class="edrow"><div class="edk">Required taxonomy<span class="k2">Axes every skill must declare</span></div><div class="edv">${taxoRow}</div></div>
+            <div class="edrow"><div class="edk">Allowed domains<span class="k2">Frontmatter domain must be one of these</span></div><div class="edv">${chipList("allowedDomains")}</div></div>
+            <div class="edrow"><div class="edk">Allowed layers</div><div class="edv">${chipList("allowedLayers")}</div></div>
+            <div class="edrow"><div class="edk">Required sections<span class="k2">Headings each SKILL.md must contain</span></div><div class="edv">${chipList("requireSections", { mono: true, display: (v) => "## " + v })}</div></div>
+            <div class="edrow"><div class="edk">Description length</div><div class="edv">min <input class="num" type="text" inputmode="numeric" value="${d.descriptionMinChars ?? ""}" data-rules-num="descriptionMinChars" /> to max <input class="num" type="text" inputmode="numeric" value="${d.descriptionMaxChars ?? ""}" data-rules-num="descriptionMaxChars" /><span style="color:var(--faint);font-size:12.5px">characters</span></div></div>
+            <div class="edrow"><div class="edk">Body max lines<span class="k2">SKILL.md body cap, waivable per skill</span></div><div class="edv"><input class="num" type="text" inputmode="numeric" value="${d.bodyMaxLines ?? ""}" data-rules-num="bodyMaxLines" /></div></div>
+            <div class="edrow"><div class="edk">Forbidden patterns<span class="k2">Regex the body may not contain</span></div><div class="edv"><div class="rxlist">${rxRows}${rxAddRow}</div></div></div>
+            <div class="edrow"><div class="edk">Strict gate<span class="k2">Blocks non-compliant saves</span></div><div class="edv"><button class="switch${strictOn ? " on" : ""}" aria-label="strict" data-rules-strict="1"></button><span class="pill ${strictOn ? "on" : "off"}"><span class="pd"></span>${strictOn ? "on, blocks non-compliant saves" : "off, advisory only"}</span></div></div>
           </div>
-          <div class="group">
-            <div class="grouphead"><h2>Naming</h2><p>Custom word casing for titles and labels, stored in loom.json. Overrides the built-in acronym and brand dictionaries.</p></div>
-            ${Object.entries(state.customNames || {})
-              .sort((a, b) => a[0].localeCompare(b[0]))
-              .map(
-                ([w, c]) =>
-                  `<div class="srow"><div><div class="lbl"><span class="path">${esc(w)}</span></div><div class="subv">shown as <b>${esc(c)}</b></div></div><div class="val"><button class="btn" data-namedel="${esc(w)}">Remove</button></div></div>`,
-              )
-              .join("")}
-            <div class="addrow"><button class="btn" data-nameadd="1">+ Add a word</button></div>
-          </div>
-          <div class="group">
-            <div class="grouphead"><h2>Sync</h2><p>Push the vault to a private git remote to use it on more than one machine.</p></div>
-            <div class="srow"><div><div class="lbl">Remote</div><div class="subv">Where Sync pushes and pulls.</div></div><div class="val">${sync && sync.remote ? `<span class="path">${esc(sync.remote)}</span>` : `<span class="subv" style="margin:0">none</span>`}<button class="btn" data-remote="1">Change</button></div></div>
-          </div>
-          <p class="about">skill-loom 0.3.0 · MIT · nothing leaves this machine except your git pushes.</p>
+          ${renderRulesDockbar()}
         </div>`;
       }
 
+      // Patches just the dock bar in place (add/remove/update the disabled
+      // state) without touching the rest of the form — used from the
+      // direct-patch mutation handlers below (number inputs, regex text)
+      // so a live keystroke never blows away input focus.
+      function patchRulesDockbar() {
+        const panel = document.getElementById("rules-panel");
+        if (!panel) return;
+        const existing = panel.querySelector(".dockbar");
+        const html = renderRulesDockbar();
+        if (!html) {
+          if (existing) existing.remove();
+          return;
+        }
+        if (existing) existing.outerHTML = html;
+        else panel.insertAdjacentHTML("beforeend", html);
+      }
+
+      // Full re-render of the Rules pane content (used for click-driven
+      // mutations — add/remove/toggle — where losing focus doesn't
+      // matter). #cfg-pane itself is never recreated by this, so the
+      // delegated listeners bound once in wireRulesPane() keep working.
+      function rerenderRulesPane(opts) {
+        const p = $("#cfg-pane");
+        if (!p) return;
+        p.innerHTML = renderRulesForm();
+        if (opts && opts.focus) {
+          const el = p.querySelector(opts.focus);
+          if (el) el.focus();
+        }
+      }
+
+      function rulesDiscard() {
+        initRulesDraft();
+        rulesPatternAdd = "";
+        rerenderRulesPane();
+      }
+      function rulesToggleTaxo(key) {
+        const arr = rulesDraft.requireTaxonomy;
+        const i = arr.indexOf(key);
+        if (i === -1) arr.push(key);
+        else arr.splice(i, 1);
+        rerenderRulesPane();
+      }
+      function rulesChipRemove(field, value) {
+        const arr = rulesDraft[field] || [];
+        const i = arr.indexOf(value);
+        if (i === -1) return;
+        arr.splice(i, 1);
+        rerenderRulesPane();
+      }
+      function rulesChipAddCommit(field, inputEl) {
+        const raw = (inputEl.value || "").trim();
+        if (!raw) return;
+        let v = raw;
+        if (field === "requireSections") v = v.replace(/^#+\s*/, "").trim();
+        if (!v) return;
+        const arr = rulesDraft[field] || (rulesDraft[field] = []);
+        if (!arr.includes(v)) arr.push(v);
+        inputEl.value = "";
+        rerenderRulesPane({ focus: `[data-rules-chip-add="${field}"]` });
+      }
+      function rulesToggleStrict(btnEl) {
+        rulesDraft.strict = !rulesDraft.strict;
+        btnEl.classList.toggle("on", rulesDraft.strict);
+        const label = btnEl.parentElement.querySelector(".pill");
+        if (label) {
+          label.className = "pill " + (rulesDraft.strict ? "on" : "off");
+          label.innerHTML = `<span class="pd"></span>${rulesDraft.strict ? "on, blocks non-compliant saves" : "off, advisory only"}`;
+        }
+        patchRulesDockbar();
+      }
+      function rulesNumInput(field, raw) {
+        const v = (raw || "").trim();
+        if (v === "") rulesDraft[field] = null;
+        else if (/^-?\d+$/.test(v)) rulesDraft[field] = parseInt(v, 10);
+        // else: mid-type / not a clean integer yet — leave the draft at its
+        // last valid value until the field resolves to "" or a clean int.
+        patchRulesDockbar();
+      }
+      // Toggles the invalid-regex UI (class + inline note) on one row
+      // in place, without touching the rest of the form, then patches the
+      // dock bar's disabled state.
+      function rulesRxRowFeedback(rowEl, ok, hasValue) {
+        rowEl.classList.toggle("rxbad", !ok && hasValue);
+        const next = rowEl.nextElementSibling;
+        const hasErr =
+          next && next.classList && next.classList.contains("rxerr");
+        if (!ok && hasValue && !hasErr) {
+          const e = document.createElement("div");
+          e.className = "rxerr";
+          e.textContent = "invalid regex, cannot save";
+          rowEl.after(e);
+        } else if ((ok || !hasValue) && hasErr) {
+          next.remove();
+        }
+      }
+      function rulesRxInput(i, value, rowEl) {
+        rulesDraft.forbidBodyPatterns[i] = value;
+        rulesRxRowFeedback(rowEl, isValidRegex(value), true);
+        patchRulesDockbar();
+      }
+      function rulesRxAddInput(value, rowEl) {
+        rulesPatternAdd = value;
+        rulesRxRowFeedback(rowEl, isValidRegex(value), !!value);
+        patchRulesDockbar();
+      }
+      function rulesRxRemove(i) {
+        rulesDraft.forbidBodyPatterns.splice(i, 1);
+        rerenderRulesPane();
+      }
+      function rulesRxAddCommit() {
+        const v = rulesPatternAdd.trim();
+        if (!v || !isValidRegex(v)) return;
+        rulesDraft.forbidBodyPatterns.push(v);
+        rulesPatternAdd = "";
+        rerenderRulesPane({ focus: "[data-rules-rx-add]" });
+      }
+
+      // Before the dry-run (and before the eventual write), commit any valid
+      // uncommitted "+ add" text sitting in the form's inputs into
+      // rulesDraft, reusing the same commit helpers Enter uses — so the
+      // impact preview and the saved rules match what is on screen. Each
+      // helper self-guards on an empty value, so calling all four
+      // unconditionally is safe. A pending invalid regex can't reach here:
+      // Review and save stays disabled while rulesRegexError is true.
+      function flushPendingRulesInputs() {
+        const p = $("#cfg-pane");
+        if (p)
+          p.querySelectorAll("[data-rules-chip-add]").forEach((el) =>
+            rulesChipAddCommit(el.dataset.rulesChipAdd, el),
+          );
+        rulesRxAddCommit();
+      }
+
+      // Renders the impact of rulesDraft into the Rules pane, replacing the
+      // form area (edscroll + dockbar) with the dry-run summary. The panel
+      // header stays so the pane still reads as "Rules" while reviewing.
+      function renderRulesReview(impact) {
+        const p = $("#cfg-pane");
+        if (!p) return;
+        const n = impact.newlyFlagged.length;
+        const m = impact.nowPass.length;
+        let bodyHtml;
+        if (n === 0 && m === 0) {
+          bodyHtml = `<p class="imp-empty">No skills are affected by this change.</p>`;
+        } else {
+          const rows = impact.newlyFlagged
+            .map(
+              (f) =>
+                `<div class="imp-item"><span class="badge warn">flagged</span><span class="mono">${esc(f.name)}</span><span class="why">${esc(f.reason)}</span></div>`,
+            )
+            .join("");
+          const passLine = m
+            ? `<div class="imp-item"><span class="imp-good">${m} now-flagged skill${m === 1 ? "" : "s"} would pass</span> ${impact.nowPass.map((name) => `<span class="mono">${esc(name)}</span>`).join(", ")}</div>`
+            : "";
+          bodyHtml = `<h3 class="imp-h">${n} skill${n === 1 ? "" : "s"} would be newly flagged</h3><div class="imp-list">${rows}${passLine}</div>`;
+        }
+        p.innerHTML = `<div class="panel" id="rules-panel">
+          <div class="panel-h"><h2>Rules</h2><p>What every skill must satisfy. Saving rewrites the lint block in loom.json and re-arms the gate.</p></div>
+          <div class="rules-review">
+            <div class="kicker">Dry run, before writing loom.json</div>
+            ${bodyHtml}
+            <div class="rr-actions"><button class="btn sm" id="rules-back">Back to edits</button><button class="btn primary sm" id="rules-confirm">Confirm and write loom.json</button><span class="rr-note">writes loom.json at the vault root</span></div>
+          </div>
+        </div>`;
+      }
+
+      // Review and save: dry-run rulesDraft against the vault and show the
+      // impact, without writing anything.
+      async function rulesReviewClick() {
+        flushPendingRulesInputs();
+        const dry = await api("/api/rules", { lint: rulesDraft, apply: false });
+        if (!dry.ok) {
+          toast(dry.data.error || "Could not check these rules");
+          return;
+        }
+        // The user may have navigated away from Rules while the dry-run was
+        // in flight — don't paint the review over whatever pane they're on
+        // now.
+        if (curView !== "config" || configPane !== "rules") return;
+        renderRulesReview(dry.data.impact);
+      }
+      // Back to edits: drop the review, re-render the form from rulesDraft
+      // (unchanged by the dry-run) via the normal config route.
+      function rulesReviewBack() {
+        go("config");
+      }
+      // Confirm and write: actually saves the lint block to loom.json, then
+      // reloads state and re-initializes the draft so the form and dock bar
+      // reflect what is now on disk.
+      async function rulesConfirmClick() {
+        const wet = await api("/api/rules", { lint: rulesDraft, apply: true });
+        if (!wet.ok) {
+          toast(wet.data.error || "Could not write the rules");
+          return;
+        }
+        toast("Rules saved.");
+        await loadState(); // refresh state.lint so the form reflects the saved rules
+        rulesDraft = null;
+        go("config");
+      }
+
+      // Binds delegated click/input/keydown listeners once on #cfg-pane
+      // (guarded by a dataset flag so repeat calls from rerenderRulesPane()
+      // are no-ops). Delegation means the listeners keep working across
+      // both full pane re-renders and dockbar-only patches, since neither
+      // ever replaces #cfg-pane itself.
+      function wireRulesPane() {
+        const p = $("#cfg-pane");
+        if (!p || p.dataset.rulesWired) return;
+        p.dataset.rulesWired = "1";
+        p.addEventListener("click", (e) => {
+          const taxo = e.target.closest("[data-rules-taxo]");
+          if (taxo) return rulesToggleTaxo(taxo.dataset.rulesTaxo);
+          const rm = e.target.closest("[data-rules-chip-rm]");
+          if (rm)
+            return rulesChipRemove(
+              rm.dataset.rulesChipRm,
+              rm.dataset.rulesChipValue,
+            );
+          const rxrm = e.target.closest("[data-rules-rx-rm]");
+          if (rxrm) return rulesRxRemove(Number(rxrm.dataset.rulesRxRm));
+          const strict = e.target.closest("[data-rules-strict]");
+          if (strict) return rulesToggleStrict(strict);
+          if (e.target.closest("#rules-discard")) return rulesDiscard();
+          if (e.target.closest("#rules-review")) return rulesReviewClick();
+          if (e.target.closest("#rules-back")) return rulesReviewBack();
+          if (e.target.closest("#rules-confirm")) return rulesConfirmClick();
+        });
+        p.addEventListener("input", (e) => {
+          const num = e.target.closest("[data-rules-num]");
+          if (num) return rulesNumInput(num.dataset.rulesNum, num.value);
+          const rx = e.target.closest("[data-rules-rx-i]");
+          if (rx)
+            return rulesRxInput(
+              Number(rx.dataset.rulesRxI),
+              rx.value,
+              rx.closest(".rxrow"),
+            );
+          const rxadd = e.target.closest("[data-rules-rx-add]");
+          if (rxadd)
+            return rulesRxAddInput(rxadd.value, rxadd.closest(".rxrow"));
+        });
+        p.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter") return;
+          const add = e.target.closest("[data-rules-chip-add]");
+          if (add) {
+            e.preventDefault();
+            return rulesChipAddCommit(add.dataset.rulesChipAdd, add);
+          }
+          const rxadd = e.target.closest("[data-rules-rx-add]");
+          if (rxadd) {
+            e.preventDefault();
+            return rulesRxAddCommit();
+          }
+        });
+        // Also commit an add-input's pending text when it loses focus (tab
+        // away, click elsewhere, switch Config pane), not only on Enter —
+        // so typed-but-unconfirmed text isn't silently lost. focusout
+        // bubbles (blur doesn't), so it works with this same delegated
+        // listener. Both commit helpers already no-op on an empty/whitespace
+        // value, and rulesChipAddCommit now clears its input on commit (like
+        // rulesRxAddCommit already clears rulesPatternAdd), so the Enter
+        // path leaves nothing behind for a trailing blur to re-commit.
+        p.addEventListener("focusout", (e) => {
+          // If focus is moving to a button (the dock bar's Review / Discard),
+          // do not commit-and-rerender here: it would remove the button mid
+          // click and swallow the first click. Review and save flushes the
+          // pending value first (flushPendingRulesInputs) and Discard drops it,
+          // so nothing is lost. Tab-away, click-elsewhere and pane switches
+          // still commit.
+          if (e.relatedTarget && e.relatedTarget.closest("button")) return;
+          const add = e.target.closest("[data-rules-chip-add]");
+          if (add) return rulesChipAddCommit(add.dataset.rulesChipAdd, add);
+          const rxadd = e.target.closest("[data-rules-rx-add]");
+          if (rxadd) return rulesRxAddCommit();
+        });
+      }
+
+      // Which Config pane is active. The rail switches this; render()
+      // re-runs renderConfig, which reads it fresh from this module var.
+      let configPane = "rules";
+
+      async function renderConfig(seq) {
+        setFixed(true);
+        const docs = state.docs || [];
+        const rail = [
+          { pane: "rules", label: "Rules" },
+          { pane: "vault", label: "Vault" },
+          { pane: "runtimes", label: "Runtimes" },
+          { pane: "naming", label: "Naming" },
+          { pane: "sync", label: "Sync" },
+        ];
+        const refItems = [
+          ...docs.map((d) => ({ pane: "doc:" + d.name, label: d.name })),
+          { pane: "loomjson", label: "loom.json" },
+        ];
+        const navHtml =
+          rail
+            .map(
+              (r) =>
+                `<a data-pane="${esc(r.pane)}"${configPane === r.pane ? ' class="on"' : ""}>${esc(r.label)}${r.count != null ? ` <span class="tiny">${r.count}</span>` : ""}</a>`,
+            )
+            .join("") +
+          `<div class="sep"></div><div class="railref">Reference</div>` +
+          refItems
+            .map(
+              (r) =>
+                `<a data-pane="${esc(r.pane)}"${configPane === r.pane ? ' class="on"' : ""}>${esc(r.label)}</a>`,
+            )
+            .join("");
+        navStop();
+        app().innerHTML = `<div class="configlayout">
+          <nav class="setnav cfgrail" id="cfg-nav">${navHtml}</nav>
+          <div class="cfgmain" id="cfg-main">
+            <div class="cfgcol">
+              <h1>Config</h1>
+              <p class="rvsub">How this vault is set up: the rules it enforces on every skill, and where it projects them. Pick a section.</p>
+              <div id="cfg-pane"></div>
+            </div>
+          </div>`;
+        document
+          .querySelectorAll("#cfg-nav a")
+          .forEach((a) =>
+            a.addEventListener("click", () => switchConfigPane(a.dataset.pane)),
+          );
+        await fillConfigPane(seq);
+      }
+      // Switch config sections without re-rendering the whole view: only the
+      // content pane (#cfg-pane) is refilled and the nav's active state flips.
+      // Re-rendering the entire layout (go("config")) flashed the whole box.
+      function switchConfigPane(pane) {
+        if (!pane || configPane === pane) return;
+        configPane = pane;
+        document
+          .querySelectorAll("#cfg-nav a")
+          .forEach((x) => x.classList.toggle("on", x.dataset.pane === pane));
+        // Switching sections (incl. reference ↔ reference) starts at the top.
+        document.getElementById("cfg-main")?.scrollTo(0, 0);
+        fillConfigPane(++navSeq);
+      }
+      // Reference / loom.json panes carry a Document | History toggle in their
+      // header (same pattern as the skill detail's Rendered / Source), so the
+      // git history reuses the pane instead of a permanent extra column.
+      let docView = "doc";
+      let curDoc = null;
+      function docHistoryHtml(commits) {
+        if (!commits.length)
+          return `<div class="empty" style="margin:20px 24px">No history yet.</div>`;
+        return `<div class="dochistv">${commits
+          .map(
+            (c) =>
+              `<div class="dcommit" data-dochash="${esc(c.hash)}"><div class="dctop"><span class="s">${esc(c.subject)}</span><span class="d">${esc(fmtLong(c.date))} · <span class="seewhat">See what changed</span></span></div><div class="dcdiff" hidden></div></div>`,
+          )
+          .join("")}</div>`;
+      }
+      // Render the current reference/loom.json pane (header + Document|History
+      // toggle + body). No refetch on toggle: content + commits cached in curDoc.
+      function renderDocPane(p) {
+        const d = curDoc;
+        if (!d) return;
+        const rev = d.commits.length
+          ? `<span class="docrev">${d.commits.length} revision${d.commits.length === 1 ? "" : "s"} · last changed ${esc(fmtLong(d.commits[0].date))}</span>`
+          : "";
+        // Same markup as the skill detail's Rendered/Source toggle (b = active,
+        // span = inactive) so it shares the .seg style exactly.
+        const segItem = (v, label) =>
+          docView === v
+            ? `<b data-dview="${v}">${label}</b>`
+            : `<span data-dview="${v}">${label}</span>`;
+        const seg = d.commits.length
+          ? `<span class="seg" id="docseg">${segItem("doc", "Document")}${segItem("hist", "History")}</span>`
+          : "";
+        const body =
+          docView === "hist" ? docHistoryHtml(d.commits) : d.bodyHtml;
+        p.innerHTML = `<div class="panel"><div class="panel-h"><div class="ph-top"><h2>${esc(d.name)} <span class="badge off" style="margin-left:8px">read only</span></h2>${rev}${seg}</div>${d.subtitle}</div><div id="doc-body">${body}</div></div>`;
+        const segEl = document.getElementById("docseg");
+        if (segEl)
+          segEl.onclick = (e) => {
+            const b = e.target.closest("[data-dview]");
+            if (!b || b.dataset.dview === docView) return;
+            docView = b.dataset.dview;
+            renderDocPane(p);
+          };
+        if (docView === "hist") wireDocHistory();
+      }
+      function wireDocHistory() {
+        const box = document.getElementById("doc-body");
+        if (!box) return;
+        box.onclick = async (e) => {
+          const c = e.target.closest(".dcommit");
+          if (!c) return;
+          const diffBox = c.querySelector(".dcdiff");
+          if (!diffBox.hidden) {
+            diffBox.hidden = true;
+            diffBox.innerHTML = "";
+            return;
+          }
+          const rr = await api(
+            `/api/doc-commit?name=${encodeURIComponent(curDoc.name)}&hash=${encodeURIComponent(c.dataset.dochash)}`,
+          );
+          if (!rr.ok) return toast(rr.data.error || "cannot load commit");
+          box.querySelectorAll(".dcdiff").forEach((d) => {
+            d.hidden = true;
+            d.innerHTML = "";
+          });
+          diffBox.innerHTML = `<pre class="plain">${colorDiff(rr.data.diff)}</pre>`;
+          diffBox.hidden = false;
+        };
+      }
+
+      /* ---------- config: pane fill ---------- */
+      // Fills #cfg-pane for the active configPane. The reference-doc and
+      // loom.json branches fetch async and guard on navCurrent so a stale
+      // fetch never overwrites a newer pane switch. The wiring panes
+      // (vault/runtimes/naming/sync) render synchronously; their controls
+      // ([data-consumer], [data-inplace], [data-runtimepreset],
+      // [data-runtimeadd], [data-namedel], [data-nameadd], [data-remote])
+      // are handled by the single delegated click listener bound on
+      // document near the bottom of the file, not per-render. The
+      // wire*Pane() calls below are named hooks kept for parity across
+      // panes, not actual binding sites.
+      async function fillConfigPane(seq) {
+        const p = $("#cfg-pane");
+        if (!p) return;
+        // A reference doc / loom.json switches to its Document view on entry.
+        if (configPane.startsWith("doc:") || configPane === "loomjson")
+          docView = "doc";
+        if (configPane.startsWith("doc:")) {
+          const name = configPane.slice(4);
+          const [dr, hr] = await Promise.all([
+            api(`/api/doc?name=${encodeURIComponent(name)}`),
+            api(`/api/doc-history?name=${encodeURIComponent(name)}`),
+          ]);
+          if (!navCurrent(seq)) return;
+          const content = dr.ok
+            ? dr.data.content
+            : "(could not load this document)";
+          const ext = name.split(".").pop().toLowerCase();
+          const bodyHtml = name.toLowerCase().endsWith(".md")
+            ? `<article class="md doc">${renderMd(content, false)}</article>`
+            : `<pre class="code">${highlight(content, LANG_BY_EXT[ext])}</pre>`;
+          curDoc = {
+            name,
+            subtitle: "",
+            bodyHtml,
+            commits: hr.data.versioned ? hr.data.commits || [] : [],
+          };
+          renderDocPane(p);
+          return;
+        }
+        if (configPane === "loomjson") {
+          const [dr, hr] = await Promise.all([
+            api("/api/loom-json"),
+            api("/api/doc-history?name=loom.json"),
+          ]);
+          if (!navCurrent(seq)) return;
+          const content = dr.ok
+            ? dr.data.content
+            : "(could not read loom.json)";
+          curDoc = {
+            name: "loom.json",
+            subtitle: `<p>The full config, as it sits at the vault root. Edit rules in the Rules pane, move the vault and runtimes from the command line.</p>`,
+            bodyHtml: `<pre class="code">${highlight(content, "json")}</pre>`,
+            commits: hr.data.versioned ? hr.data.commits || [] : [],
+          };
+          renderDocPane(p);
+          return;
+        }
+        if (configPane === "vault") {
+          p.innerHTML = renderVaultPane();
+          return;
+        }
+        if (configPane === "runtimes") {
+          p.innerHTML = renderRuntimesPane();
+          wireRuntimesPane();
+          return;
+        }
+        if (configPane === "naming") {
+          p.innerHTML = renderNamingPane();
+          wireNamingPane();
+          return;
+        }
+        if (configPane === "sync") {
+          p.innerHTML = renderSyncPane();
+          wireSyncPane();
+          return;
+        }
+        // rules (default): the editable form (renderRulesForm() + its
+        // delegated listeners, wired once per #cfg-pane node).
+        p.innerHTML = renderRulesForm();
+        wireRulesPane();
+      }
+
+      /* ---------- config: vault pane ---------- */
+      function renderVaultPane() {
+        const versioned = sync && sync.versioned;
+        return `<div class="panel">
+          <div class="panel-h"><h2>Vault</h2><p>The one canonical copy every runtime links back to. Move it from the command line; the config follows.</p></div>
+          <div class="srow"><div><div class="lbl">Location</div><div class="subv">Where the canonical skills live.</div></div><div class="val"><span class="path">${esc(state.vaultDir)}</span></div></div>
+          <div class="srow"><div><div class="lbl">Version control</div><div class="subv">Git tracks every edit and powers multi-machine sync.</div></div><div class="val">${versioned ? `<span class="badge ok">${CHECK}Versioned</span>` : `<span class="badge off">Not versioned</span>`}</div></div>
+        </div>`;
+      }
+
+      /* ---------- config: runtimes pane ---------- */
+      // One list, ordered by name — configured runtimes and detected presets
+      // interleaved, regardless of on/off/added state.
+      function renderRuntimesPane() {
+        const rtRows = [
+          ...Object.entries(state.consumers).map(([name, value]) => ({
+            name,
+            preset: false,
+            value,
+          })),
+          ...(state.presets || []).map((pr) => ({
+            name: pr.name,
+            preset: true,
+            path: pr.path,
+          })),
+        ].sort((a, b) => a.name.localeCompare(b.name));
+        return `<div class="panel">
+          <div class="panel-h"><h2>Runtimes</h2><p>Where skill-loom projects your skills into each runtime. Turn one off to stop linking into it.</p></div>
+          ${rtRows
+            .map((rt) => {
+              if (rt.preset) {
+                return `<div class="srow"><div><div class="lbl">${esc(rtName(rt.name))} <span class="badge off" style="margin-left:6px">detected</span></div><div class="subv"><span class="path">${esc(rt.path)}</span></div></div><div class="val"><button class="btn" data-runtimepreset="${esc(rt.name)}" data-path="${esc(rt.path)}">Add</button></div></div>`;
+              }
+              const p = rt.value;
+              const inplace =
+                p && typeof p === "object" && p.mode === "in-place";
+              if (inplace) {
+                const note =
+                  (p && p.note) ||
+                  "served in place — read directly from the vault";
+                // With a servedVia config the toggle is live: it edits that
+                // array (activate/deactivate). Without it, it is informational.
+                if (p && p.servedVia) {
+                  const active = (state.matrix || []).some(
+                    (m) => m.consumer === rt.name && m.state === "served",
+                  );
+                  const tip = active
+                    ? "served — click to deactivate (edits the runtime config; restart to apply)"
+                    : "inactive — click to activate";
+                  return `<div class="srow"><div><div class="lbl">${esc(rtName(rt.name))}</div><div class="subv"><span class="path">${esc(note)}</span></div></div><div class="val"><button class="switch${active ? " on" : ""}" data-inplace="${esc(rt.name)}" title="${tip}"></button></div></div>`;
+                }
+                return `<div class="srow"><div><div class="lbl">${esc(rtName(rt.name))}</div><div class="subv"><span class="path">${esc(note)}</span></div></div><div class="val"><button class="switch on" disabled title="served in place — no link to toggle"></button></div></div>`;
+              }
+              const loc = typeof p === "string" ? p : (p && p.path) || "";
+              const links = (state.matrix || []).filter(
+                (m) => m.consumer === rt.name,
+              );
+              const linked = links.filter((m) => m.state === "linked").length;
+              // on = fully linked; a partial runtime reads as off, and the
+              // next click links the missing skills instead of tearing
+              // everything down.
+              const full = links.length > 0 && linked === links.length;
+              const hint = full
+                ? ""
+                : linked > 0
+                  ? " — turn on to link the rest"
+                  : "";
+              return `<div class="srow"><div><div class="lbl">${esc(rtName(rt.name))}</div><div class="subv"><span class="path">${esc(loc)}</span></div></div><div class="val"><button class="switch${full ? " on" : ""}" data-consumer="${esc(rt.name)}" title="${linked} of ${links.length} skills linked${hint}"></button></div></div>`;
+            })
+            .join("")}
+          <div class="addrow"><button class="btn" data-runtimeadd="1">+ Add a runtime</button></div>
+        </div>`;
+      }
+      function wireRuntimesPane() {
+        // no-op: [data-consumer]/[data-inplace]/[data-runtimepreset]/
+        // [data-runtimeadd] are handled by the global delegated click
+        // listener (see fillConfigPane's comment above).
+      }
+
+      /* ---------- config: naming pane ---------- */
+      function renderNamingPane() {
+        return `<div class="panel">
+          <div class="panel-h"><h2>Naming</h2><p>Custom word casing for titles and labels, stored in loom.json. Overrides the built-in acronym and brand dictionaries.</p></div>
+          ${Object.entries(state.customNames || {})
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(
+              ([w, c]) =>
+                `<div class="srow"><div><div class="lbl"><span class="path">${esc(w)}</span></div><div class="subv">shown as <b>${esc(c)}</b></div></div><div class="val"><button class="btn" data-namedel="${esc(w)}">Remove</button></div></div>`,
+            )
+            .join("")}
+          <div class="addrow"><button class="btn" data-nameadd="1">+ Add a word</button></div>
+        </div>`;
+      }
+      function wireNamingPane() {
+        // no-op: [data-nameadd]/[data-namedel] are handled by the global
+        // delegated click listener (see fillConfigPane's comment above).
+      }
+
+      /* ---------- config: sync pane ---------- */
+      function renderSyncPane() {
+        return `<div class="panel">
+          <div class="panel-h"><h2>Sync</h2><p>Push the vault to a private git remote to use it on more than one machine.</p></div>
+          <div class="srow"><div><div class="lbl">Remote</div><div class="subv">Where Sync pushes and pulls.</div></div><div class="val">${sync && sync.remote ? `<span class="path">${esc(sync.remote)}</span>` : `<span class="subv" style="margin:0">none</span>`}<button class="btn" data-remote="1">Change</button></div></div>
+        </div>`;
+      }
+      function wireSyncPane() {
+        // no-op: [data-remote] is handled by the global delegated click
+        // listener (see fillConfigPane's comment above).
+      }
+
       /* ---------- archived ---------- */
+      // Archived skills as library cards: fill the fields libCard reads
+      // (modified/status/sync) so the archive renders exactly like My skills.
+      // Archived skills as library cards: the status column reads the real
+      // frontmatter status (from the server), not the archived state — that is
+      // shown by the Archived badge and the archive view itself.
+      function archivedCards() {
+        return (state.archived || []).map((x) => ({
+          ...x,
+          modified: x.date || "",
+          status: x.status || "active",
+          sync: "clean",
+        }));
+      }
+      // Archive is just the library in archived mode — same rail, table, grid,
+      // search — so it renders through renderLibrary, not a separate view.
       function renderArchived() {
-        setFixed(false);
-        const a = state.archived || [];
-        const rows = a.length
-          ? a
-              .map(
-                (x) =>
-                  `<tr><td class="mono">${esc(x.name)}</td><td class="awhen">${esc(fmtWhen(x.date))}</td><td class="reason">${esc(x.reason || "")}</td><td><a class="rlink" data-restore="${esc(x.name)}">Restore →</a></td></tr>`,
-              )
-              .join("")
-          : `<tr><td colspan="4" class="covmore">Nothing archived yet.</td></tr>`;
-        app().innerHTML = `<main class="archwrap">
-          <button class="crumb" data-go="skills">← Your library</button>
-          <h1 class="view">Archived skills</h1>
-          <p class="sub">Retired from every runtime, kept in the vault's history. Restore one to bring it back and re-link it.</p>
-          <table class="grid" style="max-width:92ch"><tr><th>Skill</th><th>Archived</th><th>Reason</th><th></th></tr>${rows}</table>
-        </main>`;
+        libArchived = true;
+        renderLibrary();
       }
 
       /* ---------- empty / first-run ---------- */
       function renderEmpty() {
         setFixed(false);
-        app().innerHTML = `<main>
+        app().innerHTML = `<main class="emptyview">
           <section class="hero">
             <span class="mark"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M4 7l8-4 8 4-8 4-8-4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4 12l8 4 8-4M4 17l8 4 8-4" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></span>
             <h1>Your vault is empty</h1>
@@ -4358,17 +6392,21 @@
 
       /* ---------- lifecycle actions ---------- */
       async function doArchive(name) {
-        const reason = await promptDialog(
-          `Archive "${name}" — reason?`,
-          "",
-          "Archive",
-        );
-        if (reason === null) return;
-        const dry = await api("/api/archive", { name, reason, apply: false });
+        // No reason prompt: the archive is folder-based and the reason is no
+        // longer surfaced. Just confirm the plan.
+        const dry = await api("/api/archive", {
+          name,
+          reason: "",
+          apply: false,
+        });
         if (!dry.ok) return toast(dry.data.message || dry.data.error);
         if (!(await confirmActions(`Archive "${name}"?`, dry.data.actions)))
           return;
-        const wet = await api("/api/archive", { name, reason, apply: true });
+        const wet = await api("/api/archive", {
+          name,
+          reason: "",
+          apply: true,
+        });
         toast(wet.data.message || wet.data.error);
         await loadState();
         go("skills");
@@ -4400,6 +6438,151 @@
         else go("detail", name);
       }
 
+      /* ---------- bulk actions + context menu ---------- */
+      // Runs a bulk endpoint: dry-run, confirm the plan, apply, reload. `names` is a
+      // snapshot of the current selection. Clears the selection on success.
+      async function bulkAction(route, extra, title) {
+        const names = [...libSel];
+        if (!names.length) return;
+        const dry = await api(route, { names, ...extra, apply: false });
+        if (!dry.ok) return toast(dry.data.message || dry.data.error);
+        if (!dry.data.actions || !dry.data.actions.length)
+          return toast("Nothing to change.");
+        if (!(await confirmActions(title, dry.data.actions))) return;
+        const wet = await api(route, { names, ...extra, apply: true });
+        toast(wet.data.message || wet.data.error);
+        libSelClear();
+        await loadState();
+        go("skills");
+      }
+      function ctxClose() {
+        document.getElementById("skillctx")?.remove();
+        document.removeEventListener("click", ctxClose);
+        document.removeEventListener("scroll", ctxClose, true);
+      }
+      function ctxItems() {
+        const n = libSel.size;
+        const head = n === 1 ? esc([...libSel][0]) : `${n} skills`;
+        // Archive view: only Open (single) + Restore are valid — setFieldOp/migrateOp
+        // resolve the live vault path, not .archive/.
+        if (libArchived) {
+          return (
+            `<div class="ctxhd">${head}</div>` +
+            (n === 1
+              ? `<button class="ctxitem" data-ctx="open">Open</button>`
+              : "") +
+            `<button class="ctxitem" data-ctx="restore">Restore</button>`
+          );
+        }
+        const sub = (label, kind, opts) =>
+          `<div class="ctxitem has-sub">${label}<span class="ctxarr">›</span><div class="ctxsub">${opts
+            .map(
+              (o) =>
+                `<button class="ctxitem" data-ctx="${kind}" data-val="${esc(o.v)}">${esc(o.label)}</button>`,
+            )
+            .join("")}</div></div>`;
+        const statusOpts = STATUS_ORDER.map((v) => ({
+          v,
+          label: statusLabel(v),
+        }));
+        const domainVals = (
+          state.lint && state.lint.allowedDomains.length
+            ? state.lint.allowedDomains
+            : axisValues("domain")
+        ).map((v) => ({ v, label: humanTax(v) }));
+        const layerVals = (
+          state.lint && state.lint.allowedLayers.length
+            ? state.lint.allowedLayers
+            : axisValues("layer")
+        ).map((v) => ({ v, label: humanTax(v) }));
+        return (
+          `<div class="ctxhd">${head}</div>` +
+          (n === 1
+            ? `<button class="ctxitem" data-ctx="open">Open</button>`
+            : "") +
+          sub("Set status", "status", statusOpts) +
+          (domainVals.length
+            ? sub("Set domain", "domain", domainVals)
+            : `<div class="ctxitem disabled">Set domain (none defined)</div>`) +
+          (layerVals.length
+            ? sub("Set layer", "layer", layerVals)
+            : `<div class="ctxitem disabled">Set layer (none defined)</div>`) +
+          `<button class="ctxitem" data-ctx="rename">Rename…</button>` +
+          `<button class="ctxitem" data-ctx="archive">Archive</button>`
+        );
+      }
+      function ctxOpen(x, y) {
+        ctxClose();
+        const m = document.createElement("div");
+        m.id = "skillctx";
+        m.className = "ctxmenu";
+        m.innerHTML = ctxItems();
+        document.body.appendChild(m);
+        // keep the menu inside the viewport
+        const r = m.getBoundingClientRect();
+        m.style.left = Math.min(x, window.innerWidth - r.width - 8) + "px";
+        m.style.top = Math.min(y, window.innerHeight - r.height - 8) + "px";
+        m.addEventListener("click", onCtxClick);
+        // close on the next outside click / any scroll
+        setTimeout(() => {
+          document.addEventListener("click", ctxClose);
+          document.addEventListener("scroll", ctxClose, true);
+        }, 0);
+      }
+      async function onCtxClick(e) {
+        const b = e.target.closest("[data-ctx]");
+        if (!b || b.classList.contains("disabled")) return;
+        e.stopPropagation();
+        const kind = b.dataset.ctx;
+        const val = b.dataset.val;
+        ctxClose();
+        if (kind === "open") return go("detail", [...libSel][0]);
+        if (kind === "status")
+          return bulkAction(
+            "/api/bulk/status",
+            { status: val },
+            `Set status to "${statusLabel(val)}"?`,
+          );
+        if (kind === "domain")
+          return bulkAction(
+            "/api/bulk/taxonomy",
+            { field: "domain", value: val },
+            `Set domain to "${humanTax(val)}"?`,
+          );
+        if (kind === "layer")
+          return bulkAction(
+            "/api/bulk/taxonomy",
+            { field: "layer", value: val },
+            `Set layer to "${humanTax(val)}"?`,
+          );
+        if (kind === "archive")
+          return bulkAction(
+            "/api/bulk/archive",
+            {},
+            `Archive ${libSel.size} skill(s)?`,
+          );
+        if (kind === "restore")
+          return bulkAction(
+            "/api/bulk/restore",
+            {},
+            `Restore ${libSel.size} skill(s)?`,
+          );
+        if (kind === "rename") return bulkRename();
+      }
+      // Single target reuses the free-text prompt (nicer than a transform);
+      // 2+ targets collect a pattern transform and hit the bulk-rename route.
+      async function bulkRename() {
+        const names = [...libSel];
+        if (names.length === 1) return doRename(names[0]);
+        const t = await renameTransformDialog(names.length);
+        if (!t) return;
+        return bulkAction(
+          "/api/bulk/rename",
+          { transform: t },
+          "Rename these skills?",
+        );
+      }
+
       /* ---------- markdown (escaped-first minimal renderer) ---------- */
       /* ── self-contained syntax highlighter (see highlighter.js) ── */
       const LANG_BY_EXT = {
@@ -4415,6 +6598,10 @@
         yml: "yaml",
         md: "markdown",
         markdown: "markdown",
+        mdx: "markdown",
+        // PHP has no dedicated tokenizer; the JS one is close enough (C-style
+        // comments, strings, numbers, shared keywords) to color it usefully.
+        php: "javascript",
         html: "html",
         htm: "html",
         css: "css",
@@ -4752,7 +6939,286 @@
           (h) => `<span class="hexsw" style="background:${h}"></span>${h}`,
         );
       }
-      function renderMd(src, showFm = true) {
+      // Parse a frontmatter block into ordered [key, value] rows. value is a
+      // string, a {list:[...]} (block "- " or inline comma list), or a nested
+      // {obj:[[k,v]...]}. The parser is indent-based and recursive, so arbitrary
+      // depth (e.g. metadata.lint.forbid-waiver.reason) is preserved, not
+      // flattened.
+      function parseFrontmatter(fm) {
+        const lines = (fm || "").split("\n");
+        const block = (start, indent) => {
+          const rows = [];
+          let i = start;
+          while (i < lines.length) {
+            const raw = lines[i];
+            if (!raw.trim() || /^\s*#/.test(raw)) {
+              i++;
+              continue;
+            }
+            const ind = raw.length - raw.trimStart().length;
+            if (ind < indent) break;
+            if (ind > indent) {
+              i++;
+              continue;
+            }
+            const kv = /^\s*([A-Za-z0-9_.\/-]+):\s?(.*)$/.exec(raw);
+            if (!kv) {
+              i++;
+              continue;
+            }
+            const key = kv[1];
+            i++;
+            if (kv[2] === "") {
+              // look ahead past blanks/comments for a nested block or list
+              let j = i;
+              while (
+                j < lines.length &&
+                (!lines[j].trim() || /^\s*#/.test(lines[j]))
+              )
+                j++;
+              const nind =
+                j < lines.length
+                  ? lines[j].length - lines[j].trimStart().length
+                  : -1;
+              if (nind > indent && /^\s*-\s+/.test(lines[j])) {
+                const items = [];
+                i = j;
+                while (i < lines.length) {
+                  const lm = /^(\s*)-\s+(.*)$/.exec(lines[i]);
+                  if (!lm || lm[1].length !== nind) break;
+                  items.push(lm[2].trim().replace(/^["']|["']$/g, ""));
+                  i++;
+                }
+                rows.push([key, { list: items }]);
+                continue;
+              }
+              if (nind > indent) {
+                const sub = block(j, nind);
+                rows.push([key, { obj: sub.rows }]);
+                i = sub.i;
+                continue;
+              }
+            }
+            rows.push([key, kv[2].replace(/^["']|["']$/g, "")]);
+          }
+          return { rows, i };
+        };
+        return block(0, 0).rows;
+      }
+      // Frontmatter keys whose value is a list (rendered as chips), whether the
+      // source used an inline comma list or a block "- " list.
+      const FM_LIST_KEYS = new Set([
+        "tools",
+        "disallowedTools",
+        "allowedTools",
+        "allowedDomains",
+        "allowedLayers",
+        "requireTaxonomy",
+        "requireSections",
+        "tags",
+        "sources",
+        "forbidBodyPatterns",
+      ]);
+      const FM_URL = (v) => typeof v === "string" && /^https?:\/\//.test(v);
+      // Wrap bare http(s) URLs in already-escaped/inlined text as links —
+      // including inside inline `<code>` (a reference URL in backticks should
+      // still be clickable). Existing <a> anchors are stashed first so their
+      // href/text URLs are never double-linkified. Trailing sentence punctuation
+      // stays outside the link.
+      function linkifyBareUrls(s) {
+        const anchors = [];
+        const stashed = s.replace(/<a\b[^>]*>[\s\S]*?<\/a>/g, (m) => {
+          anchors.push(m);
+          return ` ${anchors.length - 1} `;
+        });
+        const linked = stashed.replace(/https?:\/\/[^\s<>"'`)\]]+/g, (u) => {
+          const tail = (/[.,;:!?]+$/.exec(u) || [""])[0];
+          const core = tail ? u.slice(0, -tail.length) : u;
+          return `<a href="${core}" rel="noopener" target="_blank">${core}</a>${tail}`;
+        });
+        return linked.replace(/ (\d+) /g, (_, i) => anchors[+i]);
+      }
+      // Single recursive frontmatter value renderer, shared by the frontmatter
+      // card AND the skill detail rail, so nested objects and lists render
+      // identically in both places. Nested objects indent recursively; lists
+      // become chips; model/description/URLs keep their treatments.
+      function fmValHtml(key, val) {
+        if (val && typeof val === "object" && val.obj)
+          return `<div class="fmsub">${val.obj
+            .map(([k, v]) => {
+              // A nested object stacks (key on its own line, block indented
+              // below) so deep trees never cascade the value into a sliver.
+              const nested = v && typeof v === "object" && v.obj;
+              return nested
+                ? `<div class="fmsubrow nested"><span class="fmk">${esc(k)}</span>${fmValHtml(k, v)}</div>`
+                : `<div class="fmsubrow"><span class="fmk">${esc(k)}</span><span class="fmv">${fmValHtml(k, v)}</span></div>`;
+            })
+            .join("")}</div>`;
+        let list = val && typeof val === "object" && val.list ? val.list : null;
+        if (
+          !list &&
+          typeof val === "string" &&
+          FM_LIST_KEYS.has(key) &&
+          val.includes(",")
+        )
+          list = val
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+        if (list) {
+          const cls = key === "disallowedTools" ? " deny" : "";
+          // A single-item list reads as plain bracketed text (`[value]`), not a
+          // lone chip; two or more render as chips side by side.
+          if (list.length === 1) {
+            const v = list[0];
+            const inner = FM_URL(v)
+              ? `<a class="fmlink" href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>`
+              : esc(v);
+            return `<span class="fmvmono">[${inner}]</span>`;
+          }
+          return list
+            .map((v) =>
+              FM_URL(v)
+                ? `<a class="chip${cls} fmlink" href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>`
+                : `<span class="chip${cls}">${esc(v)}</span>`,
+            )
+            .join("");
+        }
+        if (key === "model")
+          return `<span class="chip model">${esc(val)}</span>`;
+        if (key === "description")
+          return `<span class="fmvdesc">${esc(val)}</span>`;
+        if (FM_URL(val))
+          return `<a class="fmvmono fmlink" href="${esc(val)}" target="_blank" rel="noopener">${esc(val)}</a>`;
+        return `<span class="fmvmono">${esc(val ?? "")}</span>`;
+      }
+      // A secondary file's frontmatter as a compact metadata card. Generic:
+      // works for agent files and any other frontmatter schema.
+      function renderFrontmatterCard(fm, fmFile) {
+        const rows = parseFrontmatter(fm);
+        // On the main SKILL.md the name/description already sit in the detail
+        // header, so drop them here (this card is only used for secondary files).
+        const skipDup = fmFile === "SKILL.md";
+        const shown = rows.filter(
+          ([k]) => !(skipDup && (k === "name" || k === "description")),
+        );
+        if (!shown.length) return "";
+        const body = shown
+          .map(
+            ([k, v]) =>
+              `<div class="fmrow"><span class="fmk">${esc(k)}</span><span class="fmv">${fmValHtml(k, v)}</span></div>`,
+          )
+          .join("");
+        const file = fmFile ? `<span class="ffile">${esc(fmFile)}</span>` : "";
+        return `<div class="fmcard"><div class="fh"><span class="ft">Frontmatter</span>${file}</div>${body}</div>`;
+      }
+      // Taxonomy chips + lifecycle status for the skill detail header — the
+      // library already trains the eye to read these, so no frontmatter card.
+      function detMetaHtml(s) {
+        const out = [];
+        if (s.domain) out.push(taxChip("domain", s.domain));
+        if (s.layer) out.push(taxChip("layer", s.layer));
+        out.push(statusBadge(s.status || "active", true));
+        return `<div class="detmeta">${out.join("")}</div>`;
+      }
+      // A metadata list value → clean chip strings. Handles a parsed block list,
+      // an inline YAML array kept as a "[a, b]" string, and a bare comma string.
+      function metaListValues(val) {
+        if (val && typeof val === "object" && val.list) return val.list;
+        let s = String(val ?? "").trim();
+        if (s.startsWith("[") && s.endsWith("]")) s = s.slice(1, -1);
+        return s
+          .split(",")
+          .map((x) => x.trim().replace(/^["']|["']$/g, ""))
+          .filter(Boolean);
+      }
+      // Non-taxonomy frontmatter (the metadata: object), shown below the
+      // description in the main column. `sources` render as bare chips (no label);
+      // a lint waiver renders as a soft note carrying its reason; anything else
+      // falls back to a small labelled line. No divider, no "Metadata" header — it
+      // reads as part of the document. name/description/domain/layer/status live
+      // in the header and taxonomy chips already.
+      function skillMetaHtml(fm) {
+        if (!fm) return "";
+        const HIDE = new Set([
+          "name",
+          "description",
+          "domain",
+          "layer",
+          "status",
+          "icon",
+          "icon-color",
+        ]);
+        const rows = parseFrontmatter(fm).filter(([k]) => !HIDE.has(k));
+        if (!rows.length) return "";
+        const leaves = [];
+        const walk = (trail, key, val) => {
+          if (val && typeof val === "object" && val.obj)
+            val.obj.forEach(([k, v]) => walk([...trail, key], k, v));
+          else leaves.push({ trail: [...trail, key], val });
+        };
+        rows.forEach(([k, v]) =>
+          k === "metadata" && v && typeof v === "object" && v.obj
+            ? v.obj.forEach(([ck, cv]) => walk([], ck, cv))
+            : walk([], k, v),
+        );
+        const parts = leaves.map(({ trail, val }) => {
+          // OpenClaw runtime hints: drop the decorative emoji (the skill's own
+          // tile already stands in), and show always-injected as an accent chip
+          // when set. Other openclaw.* keys fall through to the generic handling.
+          if (trail[0] === "openclaw") {
+            const leaf = trail[trail.length - 1];
+            if (leaf === "emoji") return "";
+            if (leaf === "always")
+              return val === true || val === "true"
+                ? `<div class="smchips"><span class="injchip">always-injected</span></div>`
+                : "";
+          }
+          // A lint waiver (…-waiver.reason) → a soft note labelled by its kind.
+          const waiver = trail.find((t) => /-waiver$/.test(t));
+          if (waiver) {
+            const label = waiver.charAt(0).toUpperCase() + waiver.slice(1);
+            return `<div class="smnote"><span class="smnk">${esc(label)}</span><p class="smnr">${linkifyBareUrls(esc(String(val ?? "")))}</p></div>`;
+          }
+          const key = trail[trail.length - 1];
+          const isList =
+            (val && typeof val === "object" && val.list) ||
+            FM_LIST_KEYS.has(key) ||
+            (typeof val === "string" && val.trim().startsWith("["));
+          if (isList)
+            return `<div class="smchips">${metaListValues(val)
+              .map((v) => `<span class="chip">${esc(v)}</span>`)
+              .join("")}</div>`;
+          // Fallback: any other custom scalar as a small labelled line.
+          return `<div class="smline"><span class="smk">${trail.map(esc).join(" · ")}</span><span class="smv">${linkifyBareUrls(esc(String(val ?? "")))}</span></div>`;
+        });
+        const body = parts.filter(Boolean).join("");
+        if (!body) return ""; // e.g. a skill whose only metadata was a dropped emoji
+        return `<section class="skillmeta">${body}</section>`;
+      }
+      // GitHub-style heading slug: lowercase, drop punctuation, spaces → hyphens.
+      // Keeps unicode letters/numbers so accented headings anchor correctly.
+      function slugify(s) {
+        return String(s)
+          .trim()
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N}\s-]/gu, "")
+          .replace(/\s+/g, "-")
+          .replace(/-+/g, "-")
+          .replace(/^-|-$/g, "");
+      }
+      function renderMd(src, showFm = true, fmFile = "", humanTitle = "") {
+        // Per-render slug registry so duplicate headings get -1/-2 suffixes and
+        // in-page anchor links resolve to a unique element id.
+        const slugSeen = Object.create(null);
+        const headingId = (raw) => {
+          const base = slugify(raw) || "section";
+          let id = base,
+            n = 1;
+          while (slugSeen[id]) id = `${base}-${n++}`;
+          slugSeen[id] = true;
+          return id;
+        };
         let text = src,
           fm = "";
         const m = /^---\n([\s\S]*?)\n---\n?/.exec(text);
@@ -4761,25 +7227,28 @@
           text = text.slice(m[0].length);
         }
         const inline = (s) =>
-          s
-            .replace(/`([^`]+)`/g, (m, c) => "<code>" + hexSw(c) + "</code>")
-            .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-            .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-            .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (all, t, u) =>
-              /^(https?:\/\/|\.|\/|#)/.test(u)
-                ? `<a href="${u}" rel="noopener" target="_blank">${t}</a>`
-                : all,
-            );
+          linkifyBareUrls(
+            s
+              .replace(/`([^`]+)`/g, (m, c) => "<code>" + hexSw(c) + "</code>")
+              .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+              .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+              .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (all, t, u) =>
+                u.startsWith("#")
+                  ? // in-page anchor: scroll within the viewer, never a new tab/reload
+                    `<a href="${u}" class="docanchor">${t}</a>`
+                  : /^(https?:\/\/|\.|\/)/.test(u)
+                    ? `<a href="${u}" rel="noopener" target="_blank">${t}</a>`
+                    : all,
+              ),
+          );
         const lines = esc(text).split("\n");
         const rawLines = text.split("\n");
-        let html =
-          fm && showFm
-            ? `<div class="fm mono" style="color:var(--faint);font-size:11.5px;margin-bottom:14px">${esc(fm).replace(/\n/g, "<br>")}</div>`
-            : "";
+        let html = fm && showFm ? renderFrontmatterCard(fm, fmFile) : "";
         let inCode = false,
           codeLang = null,
           codeBuf = [],
           inList = null,
+          firstH1 = true,
           para = [];
         const flushPara = () => {
           if (para.length) {
@@ -4851,7 +7320,22 @@
           if (h) {
             flushPara();
             flushList();
-            html += `<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`;
+            const lvl = h[1].length;
+            const rawText = rawLines[li].replace(/^\s*#{1,6}\s+/, "");
+            const id = headingId(rawText);
+            const isFirstH1 = lvl === 1 && firstH1;
+            if (isFirstH1) firstH1 = false;
+            // On SKILL.md the first H1 is the skill slug (e.g. midas-brand-system);
+            // render it humanized like the detail title, so the body doesn't lead
+            // with a raw hyphenated slug that clashes with the header above.
+            const inner =
+              isFirstH1 &&
+              fmFile === "SKILL.md" &&
+              humanTitle &&
+              slugify(rawText) === slugify(humanTitle)
+                ? esc(humanTitle)
+                : inline(h[2]);
+            html += `<h${lvl} id="${esc(id)}">${inner}</h${lvl}>`;
             continue;
           }
           const ul = /^\s*[-*]\s+(.*)$/.exec(line),
@@ -4901,20 +7385,63 @@
 
       /* ---------- events + boot ---------- */
       document.addEventListener("click", (e) => {
+        if (suppressClickOnce) {
+          suppressClickOnce = false;
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        // In-page anchor in a rendered doc: scroll the target heading into view
+        // inside the viewer instead of letting the browser reload on the hash.
+        const docAnchor =
+          e.target instanceof Element ? e.target.closest("a.docanchor") : null;
+        if (docAnchor) {
+          e.preventDefault();
+          const id = decodeURIComponent(
+            (docAnchor.getAttribute("href") || "").slice(1),
+          );
+          const tgt = id && document.getElementById(id);
+          if (tgt) tgt.scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
+        }
+        const selCard =
+          e.target instanceof Element ? e.target.closest("[data-skill]") : null;
+        if (selCard && (curView === "skills" || curView === "archived")) {
+          const onBox = e.target.closest(".selbox, .selcol");
+          if (onBox || e.metaKey || e.ctrlKey) {
+            e.preventDefault();
+            libToggleSel(selCard.dataset.skill);
+            return;
+          }
+          if (e.shiftKey) {
+            e.preventDefault();
+            window.getSelection()?.removeAllRanges();
+            libSelRange(selCard.dataset.skill);
+            return;
+          }
+        }
         const t =
           e.target instanceof Element
             ? e.target.closest(
-                "[data-go],[data-skill],[data-file],[data-mode],[data-hash-open],[data-toggle],[data-consumer],[data-restore],[data-remote],[data-coming],[data-nameadd],[data-namedel],[data-runtimeadd],[data-runtimepreset]",
+                "[data-go],[data-skill],[data-file],[data-mode],[data-hash-open],[data-toggle],[data-consumer],[data-inplace],[data-restore],[data-remote],[data-coming],[data-nameadd],[data-namedel],[data-runtimeadd],[data-runtimepreset]",
               )
             : null;
         if (!t) {
-          // click on empty library space clears the keyboard selection
-          if (curView === "skills") libDeselect();
+          // click on empty library space clears the selection + cursor
+          if (curView === "skills" || curView === "archived") {
+            libSelClear();
+            libDeselect();
+          }
           return;
         }
         if (t.dataset.go === "skills" && t.id === "nav-skills") goSkillsTab();
         else if (t.dataset.go) {
           if (t.dataset.go === "skills") lastDetail = null;
+          // Clicking the Config nav lands on the Rules pane, never a
+          // remembered pane. Keyed on the nav element id, not curView: the
+          // Config view itself runs under curView === "config", so a
+          // curView check would miss this case.
+          if (t.id === "nav-config") configPane = "rules";
           go(t.dataset.go);
         } else if (t.dataset.skill) go("detail", t.dataset.skill);
         else if (t.dataset.file) selectFile(t.dataset.file);
@@ -4923,6 +7450,7 @@
           showCommit(t.dataset.hashOpen, t.dataset.subj);
         else if (t.dataset.toggle) toggleRuntime(t.dataset.toggle, t);
         else if (t.dataset.consumer) toggleConsumer(t.dataset.consumer, t);
+        else if (t.dataset.inplace) toggleInplace(t.dataset.inplace, t);
         else if (t.dataset.restore) doRestore(t.dataset.restore);
         else if (t.dataset.remote) doRemote();
         else if (t.dataset.runtimeadd) doRuntimeAdd();
@@ -4932,16 +7460,103 @@
         else if (t.dataset.namedel) doNameDel(t.dataset.namedel);
         else if (t.dataset.coming) comingSoon(t.dataset.coming);
       });
+      // Marquee drag-select over the library (grid + list). Mousedown inside
+      // #groups, drag past a small threshold to rubber-band; every card/row the
+      // band intersects is selected. Holding Cmd/Ctrl/Shift adds to the current
+      // selection instead of replacing it. A real drag swallows the click it
+      // would otherwise emit (so it never opens a detail).
+      let dragSel = null;
+      document.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        if (curView !== "skills" && curView !== "archived") return;
+        const groups = document.getElementById("groups");
+        if (!groups || !groups.contains(e.target)) return;
+        dragSel = {
+          x0: e.clientX,
+          y0: e.clientY,
+          moved: false,
+          base:
+            e.metaKey || e.ctrlKey || e.shiftKey ? new Set(libSel) : new Set(),
+          box: null,
+        };
+      });
+      document.addEventListener("mousemove", (e) => {
+        if (!dragSel) return;
+        const dx = e.clientX - dragSel.x0,
+          dy = e.clientY - dragSel.y0;
+        if (!dragSel.moved && Math.hypot(dx, dy) < 5) return;
+        if (!dragSel.moved) {
+          dragSel.moved = true;
+          const box = document.createElement("div");
+          box.id = "marquee";
+          document.body.appendChild(box);
+          dragSel.box = box;
+          document.body.style.userSelect = "none";
+        }
+        const x = Math.min(e.clientX, dragSel.x0),
+          y = Math.min(e.clientY, dragSel.y0),
+          w = Math.abs(dx),
+          h = Math.abs(dy);
+        Object.assign(dragSel.box.style, {
+          left: x + "px",
+          top: y + "px",
+          width: w + "px",
+          height: h + "px",
+        });
+        const R = { left: x, top: y, right: x + w, bottom: y + h };
+        const next = new Set(dragSel.base);
+        for (const c of libVisibleEls()) {
+          const b = c.getBoundingClientRect();
+          if (!(
+            b.right < R.left ||
+            b.left > R.right ||
+            b.bottom < R.top ||
+            b.top > R.bottom
+          ))
+            next.add(c.dataset.skill);
+        }
+        libSel = next;
+        libSelApply();
+      });
+      document.addEventListener("mouseup", () => {
+        if (!dragSel) return;
+        const dragged = dragSel.moved;
+        dragSel.box?.remove();
+        document.body.style.userSelect = "";
+        dragSel = null;
+        if (dragged) {
+          if (libSel.size) libSelAnchor = [...libSel][libSel.size - 1];
+          suppressClickOnce = true;
+        }
+      });
+      document.addEventListener("contextmenu", (e) => {
+        const card =
+          e.target instanceof Element ? e.target.closest("[data-skill]") : null;
+        if (!card || (curView !== "skills" && curView !== "archived")) return;
+        e.preventDefault();
+        // Right-clicking a row outside the selection makes it the sole target.
+        if (!libSel.has(card.dataset.skill)) {
+          libSel = new Set([card.dataset.skill]);
+          libSelAnchor = card.dataset.skill;
+          libSelApply();
+        }
+        ctxOpen(e.clientX, e.clientY);
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") ctxClose();
+      });
       // ── Keyboard shortcuts + help overlay ────────────────────────────────
       const SHORTCUTS = [
         ["?", "Toggle this help"],
-        ["/", "Focus search"],
-        ["1 · 2 · 3", "My skills · Status · Settings"],
+        ["F", "Focus search"],
+        ["1 · 2 · 3", "My skills · Status · Config"],
         ["n", "New skill"],
         ["← ↑ ↓ →", "Select a skill (library) · navigate (detail)"],
         ["↵ Enter", "Open selected skill (library)"],
         ["v", "Toggle Rendered / Source"],
         ["g", "Toggle grid / list (library)"],
+        ["d", "Cycle grouping: none / domain / layer"],
+        ["a", "Toggle active / archived skills"],
         ["e", "Rename skill"],
         ["r", "Refresh from the vault"],
         ["Esc", "Back · close · clear search"],
@@ -4980,17 +7595,66 @@
             el.isContentEditable);
         if (e.key === "Escape") {
           if (helpOpen) return closeHelp();
-          if (typing) return el.blur();
+          if (typing) {
+            // First Escape clears a non-empty search field and keeps focus; a
+            // second Escape (now empty), or Escape in any other input, blurs.
+            if (el.id === "search" && el.value) {
+              el.value = "";
+              searchQ = "";
+              filterLibrary();
+              return;
+            }
+            return el.blur();
+          }
           if (curView === "detail") return void go("skills");
-          if (curView === "skills" && libSelName) return libDeselect();
+          if (curView === "skills" || curView === "archived") {
+            // Escape resets the search even when the field isn't focused (e.g.
+            // after typing then clicking away), before it clears any selection.
+            if (searchQ) {
+              searchQ = "";
+              const inp = $("#search");
+              if (inp) inp.value = "";
+              filterLibrary();
+              return;
+            }
+            if (libSel.size || libSelName) {
+              libSelClear();
+              libDeselect();
+              return;
+            }
+          }
           return;
         }
         if (e.key === "?" && !typing) {
           e.preventDefault();
           return toggleHelp();
         }
+        // Cmd/Ctrl+A: context-aware select-all. My skills / Archived select every
+        // visible row; the detail viewer selects the shown file's text; Status
+        // and Config select nothing.
+        if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
+          if (typing) return; // inputs keep their native select-all
+          if (curView === "skills" || curView === "archived") {
+            e.preventDefault();
+            return libSelectAllVisible();
+          }
+          if (curView === "detail") {
+            const v = document.getElementById("viewer");
+            if (v) {
+              e.preventDefault();
+              const sel = window.getSelection();
+              const rg = document.createRange();
+              rg.selectNodeContents(v);
+              sel.removeAllRanges();
+              sel.addRange(rg);
+            }
+            return;
+          }
+          e.preventDefault();
+          return;
+        }
         if (helpOpen || typing || e.metaKey || e.ctrlKey || e.altKey) return;
-        if (e.key === "/") {
+        if (e.key === "f" || e.key === "F") {
           e.preventDefault();
           if (curView !== "skills") go("skills");
           setTimeout(() => $("#search")?.focus(), 0);
@@ -4998,7 +7662,18 @@
         }
         if (e.key === "1") return goSkillsTab();
         if (e.key === "2") return void go("status");
-        if (e.key === "3") return void go("settings");
+        if (e.key === "3") {
+          // Parity with clicking the Config nav: land on the Rules pane,
+          // not a remembered pane (go()'s own reset is guarded by
+          // curView !== config, which is false while already in Config).
+          configPane = "rules";
+          return void go("config");
+        }
+        if (e.key === "a" && (curView === "skills" || curView === "archived")) {
+          e.preventDefault();
+          libArchived = !libArchived;
+          return void renderLibrary();
+        }
         if (e.key === "r") {
           e.preventDefault();
           return void loadState();
@@ -5014,12 +7689,39 @@
             }
             return void renderLibrary();
           }
+          if (e.key === "d") {
+            e.preventDefault();
+            groupAxis =
+              groupAxis === "none"
+                ? "domain"
+                : groupAxis === "domain"
+                  ? "layer"
+                  : "none";
+            return void renderLibrary();
+          }
           if (e.key.startsWith("Arrow")) {
             e.preventDefault();
-            return libNav(e.key);
+            return libNav(e.key, e.shiftKey);
           }
           if (e.key === "Enter" && libSelName)
             return void go("detail", libSelName);
+        }
+        if (curView === "config" && e.key.startsWith("Arrow")) {
+          const panes = [...document.querySelectorAll("#cfg-nav a")].map(
+            (a) => a.dataset.pane,
+          );
+          const i = panes.indexOf(configPane);
+          if (i < 0) return;
+          const back = e.key === "ArrowUp" || e.key === "ArrowLeft";
+          const ni = Math.min(
+            panes.length - 1,
+            Math.max(0, i + (back ? -1 : 1)),
+          );
+          if (ni !== i) {
+            e.preventDefault();
+            switchConfigPane(panes[ni]);
+          }
+          return;
         }
         if (curView !== "detail") return;
         if (e.key === "v") {
@@ -5076,9 +7778,38 @@
         if (!r.ok) return toast(r.data.error || "failed");
         toast(
           on
-            ? `Linking into ${cap(consumer)}`
-            : `Unlinked from ${cap(consumer)}`,
+            ? `Linking into ${rtName(consumer)}`
+            : `Unlinked from ${rtName(consumer)}`,
         );
+        await loadState();
+        render();
+      }
+      async function toggleInplace(consumer, el) {
+        const on = !el.classList.contains("on");
+        // Deactivating removes the vault from the runtime's config — that hides
+        // every skill from it — so confirm first. Activating is low-stakes.
+        if (!on) {
+          const dry = await api("/api/inplace-toggle", {
+            consumer,
+            on,
+            apply: false,
+          });
+          if (!dry.ok) return toast(dry.data.error || "failed");
+          if (
+            !(await confirmActions(
+              `Deactivate ${rtName(consumer)}? Hides every skill from it until you turn it back on.`,
+              dry.data.actions,
+            ))
+          )
+            return;
+        }
+        const r = await api("/api/inplace-toggle", {
+          consumer,
+          on,
+          apply: true,
+        });
+        if (!r.ok) return toast(r.data.error || "failed");
+        toast(r.data.message || (on ? "Activated" : "Deactivated"));
         await loadState();
         render();
       }
@@ -5113,6 +7844,13 @@
         if (!r.ok) return toast(r.data.error || "failed to load state");
         lastStateAt = Date.now();
         state = r.data;
+        // Drop selections whose skill vanished (renamed/archived) so bulk ops never
+        // target a ghost.
+        const live = new Set([
+          ...(state.skills || []).map((s) => s.name),
+          ...(state.archived || []).map((s) => s.name),
+        ]);
+        for (const n of [...libSel]) if (!live.has(n)) libSel.delete(n);
         $("#vault").textContent =
           `${state.vaultDir.replace(/^.*\//, "~/")} · ${state.skills.length} skills`;
         sync = (await api("/api/sync")).data;
