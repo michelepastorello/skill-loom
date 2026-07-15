@@ -5,3 +5,6 @@ dist/
 
 # Generated demo vault (regenerate with: node demo/scaffold-demo.mjs)
 demo/demo-vault/
+
+# graphify local analysis artifact
+graphify-out/

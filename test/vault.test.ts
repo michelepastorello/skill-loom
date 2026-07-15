@@ -199,6 +199,29 @@ test("skillWarnings flags a description under descriptionMinChars", () => {
   );
 });
 
+test("skillWarnings flags an empty or absent description under descriptionMinChars", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const empty = makeSkill(vault, "a", "empty");
+  writeFileSync(
+    path.join(empty, "SKILL.md"),
+    "---\nname: empty\ndescription:\n---\n\n# empty\n",
+  );
+  const absent = makeSkill(vault, "a", "absent");
+  writeFileSync(
+    path.join(absent, "SKILL.md"),
+    "---\nname: absent\nlayer: tool\n---\n\n# absent\n",
+  );
+  const cfg = { ...base, lint: { descriptionMinChars: 250 } };
+  const flagged = new Set(
+    skillWarnings(scanVault(vault, cfg), cfg)
+      .filter((x) => x.kind === "description-length")
+      .map((x) => x.name),
+  );
+  assert.ok(flagged.has("empty"), "empty description must be flagged");
+  assert.ok(flagged.has("absent"), "absent description must be flagged");
+});
+
 test("forbidBodyPatterns flags a forbidden regex in the body", () => {
   const vault = makeTmp();
   const base = makeConfig(vault, {});
@@ -274,6 +297,19 @@ test("waiverReason reads the nested reason for a given key, else null", () => {
   assert.equal(waiverReason(md, "length-waiver"), "perché sì");
   // key-specific: a forbid-waiver is not read as a length-waiver
   assert.equal(waiverReason(md, "forbid-waiver"), null);
+});
+
+test("waiverReason does not leak a sibling waiver's reason into a reasonless key (#20)", () => {
+  const vault = makeTmp();
+  const d = makeSkill(vault, "a", "leak");
+  const md = path.join(d, "SKILL.md");
+  writeFileSync(
+    md,
+    "---\nname: leak\ndescription: d\nmetadata:\n  lint:\n    length-waiver:\n      approved: true\n    forbid-waiver:\n      reason: allowed here\n---\n\n# leak\n",
+  );
+  // length-waiver's own block has no reason — must not borrow forbid-waiver's.
+  assert.equal(waiverReason(md, "length-waiver"), null);
+  assert.equal(waiverReason(md, "forbid-waiver"), "allowed here");
 });
 
 test("forbidBodyPatterns is suppressed by a forbid-waiver", () => {

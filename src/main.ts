@@ -17,9 +17,9 @@ usage:
   skill-loom link [--apply]
   skill-loom status
   skill-loom doctor
-  skill-loom archive <name> [--reason <text>] [--apply]
+  skill-loom archive <name> [--apply]
   skill-loom migrate <old> <new> [--apply]
-  skill-loom ui [--port N] [--host ADDR] [--no-open]
+  skill-loom ui [--port N] [--host ADDR] [--allow-remote-writes] [--no-open]
   skill-loom sync [--apply] [--force]
 
 link, archive, migrate and sync are dry-run by default: nothing changes without --apply.
@@ -35,8 +35,16 @@ export function flag(args: string[], name: string): boolean {
 export function opt(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   if (i === -1) return undefined;
-  const removed = args.splice(i, 2);
-  return removed[1];
+  const next = args[i + 1];
+  // A following flag (or nothing) means no value was supplied; consume only the
+  // flag itself so the next flag isn't swallowed as this one's value (which
+  // would land a literal "--status" in a skill's frontmatter).
+  if (next === undefined || next.startsWith("--")) {
+    args.splice(i, 1);
+    return undefined;
+  }
+  args.splice(i, 2);
+  return next;
 }
 
 export function main(argv: string[], cwd: string): number {
@@ -70,8 +78,7 @@ export function main(argv: string[], cwd: string): number {
         return runDoctor(cwd);
       case "archive": {
         const apply = flag(args, "--apply");
-        const reason = opt(args, "--reason");
-        return runArchive(cwd, args.shift(), reason, apply);
+        return runArchive(cwd, args.shift(), apply);
       }
       case "migrate": {
         const apply = flag(args, "--apply");
@@ -86,10 +93,12 @@ export function main(argv: string[], cwd: string): number {
         }
         const host = opt(args, "--host");
         const noOpen = flag(args, "--no-open");
+        const allowRemoteWrites = flag(args, "--allow-remote-writes");
         return runUi(cwd, {
           port: portNum,
           host,
           open: !noOpen,
+          allowRemoteWrites,
         });
       }
       case "sync": {

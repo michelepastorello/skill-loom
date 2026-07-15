@@ -12,6 +12,7 @@ import path from "node:path";
 import {
   addOp,
   archiveOp,
+  bulkApply,
   bulkArchiveOp,
   bulkRenameOp,
   bulkRestoreOp,
@@ -20,6 +21,7 @@ import {
   migrateOp,
   restoreOp,
   setFieldOp,
+  type OpOutcome,
 } from "../src/ops.js";
 import { saveConfig, DEFAULT_IGNORE } from "../src/config.js";
 import { makeTmp, makeSkill, makeConfig } from "./helpers.js";
@@ -99,7 +101,7 @@ test("addOp on a strict-taxonomy vault: requires domain/layer, scaffolds section
 
 test("archiveOp and migrateOp report status 2 on missing skill", () => {
   const vault = vaultBare();
-  assert.equal(archiveOp(vault, "ghost", undefined, true).status, 2);
+  assert.equal(archiveOp(vault, "ghost", true).status, 2);
   assert.equal(migrateOp(vault, "ghost", "new-name", true).status, 2);
 });
 
@@ -107,7 +109,7 @@ test("archiveOp apply moves the skill to .archive without touching loom.json", (
   const vault = vaultBare();
   makeSkill(vault, "cat", "alpha");
   const before = readFileSync(path.join(vault, "loom.json"), "utf8");
-  const out = archiveOp(vault, "alpha", "superseded", true);
+  const out = archiveOp(vault, "alpha", true);
   assert.equal(out.status, 0);
   assert.ok(existsSync(path.join(vault, ".archive", "alpha", "SKILL.md")));
   // Archiving is a pure move: loom.json is not rewritten.
@@ -119,7 +121,7 @@ test("restoreOp moves an archived skill back to the vault root and re-links it",
   const rt = makeTmp();
   makeConfig(vault, { claude: rt });
   makeSkill(vault, "biz", "demo");
-  archiveOp(vault, "demo", "obsolete", true);
+  archiveOp(vault, "demo", true);
   assert.ok(existsSync(path.join(vault, ".archive", "demo", "SKILL.md")));
 
   const dry = restoreOp(vault, "demo", false);
@@ -247,7 +249,7 @@ test("restoreOp restoring a draft skill does not link it into consumers", () => 
     path.join(dir, "SKILL.md"),
     `---\nname: draft-skill\ndescription: test skill\nstatus: draft\n---\n\n# draft-skill\n`,
   );
-  archiveOp(vault, "draft-skill", "wip", true);
+  archiveOp(vault, "draft-skill", true);
   assert.ok(
     existsSync(path.join(vault, ".archive", "draft-skill", "SKILL.md")),
   );
@@ -517,4 +519,174 @@ test("bulkRenameOp replace transform renames matching names and skips non-matchi
     /name: foo-new/,
   );
   assert.ok(existsSync(path.join(vault, "bar"))); // no-op member untouched
+});
+
+test("bulkApply keeps applying past a failing item and reports which failed", () => {
+  const op = (name: string, apply: boolean): OpOutcome =>
+    apply && name === "boom"
+      ? { status: 1, message: "kaboom", actions: [] }
+      : { status: 0, message: "ok", actions: [`did ${name}`] };
+  const out = bulkApply(["a", "boom", "c"], op, true, "done");
+  assert.equal(out.status, 1);
+  assert.match(out.message, /applied 2\/3/);
+  assert.match(out.message, /boom: kaboom/);
+});
+
+test("bulkApply catches a thrown item and still applies the rest", () => {
+  const applied: string[] = [];
+  const op = (name: string, apply: boolean): OpOutcome => {
+    if (apply && name === "throw") throw new Error("disk full");
+    if (apply) applied.push(name);
+    return { status: 0, message: "ok", actions: [] };
+  };
+  const out = bulkApply(["x", "throw", "y"], op, true, "done");
+  assert.equal(out.status, 1);
+  assert.match(out.message, /throw: disk full/);
+  assert.deepEqual(applied, ["x", "y"]);
+});
+
+test("archiveOp removes a link that correctly points at the skill (#17 happy path)", () => {
+  const vault = makeTmp();
+  const consumerDir = path.join(makeTmp(), "skills");
+  mkdirSync(consumerDir, { recursive: true });
+  makeConfig(vault, { claude: consumerDir });
+  const skillDir = makeSkill(vault, "cat", "alpha");
+  const link = path.join(consumerDir, "alpha");
+  symlinkSync(skillDir, link); // a legit link pointing at the skill's own dir
+  const out = archiveOp(vault, "alpha", true);
+  assert.equal(out.status, 0);
+  // lstat (not exists): after archive the link is broken, so exists() would be
+  // false even if the symlink file were still there.
+  assert.equal(
+    lstatSync(link, { throwIfNoEntry: false }),
+    undefined,
+    "a link pointing at the skill must be removed",
+  );
+});
+
+test("migrateOp removes the old link that pointed at the skill (#17 happy path)", () => {
+  const vault = makeTmp();
+  const consumerDir = path.join(makeTmp(), "skills");
+  mkdirSync(consumerDir, { recursive: true });
+  makeConfig(vault, { claude: consumerDir });
+  const skillDir = makeSkill(vault, "cat", "oldx");
+  const link = path.join(consumerDir, "oldx");
+  symlinkSync(skillDir, link);
+  const out = migrateOp(vault, "oldx", "newx", true);
+  assert.equal(out.status, 0);
+  assert.equal(
+    lstatSync(link, { throwIfNoEntry: false }),
+    undefined,
+    "the old link must be removed by migrate",
+  );
+});
+
+test("archiveOp leaves a foreign same-named symlink untouched (#17)", () => {
+  const vault = makeTmp();
+  const consumerDir = path.join(makeTmp(), "skills");
+  mkdirSync(consumerDir, { recursive: true });
+  makeConfig(vault, { claude: consumerDir });
+  const mine = path.join(vault, "shared");
+  mkdirSync(mine, { recursive: true });
+  writeFileSync(
+    path.join(mine, "SKILL.md"),
+    `---\nname: shared\ndescription: x\n---\n\n# shared\n`,
+  );
+  // A different vault's dir, symlinked into the same consumer under our name.
+  const foreign = path.join(makeTmp(), "shared");
+  mkdirSync(foreign, { recursive: true });
+  const link = path.join(consumerDir, "shared");
+  symlinkSync(foreign, link);
+
+  const out = archiveOp(vault, "shared", true);
+  assert.equal(out.status, 0);
+  assert.ok(
+    lstatSync(link, { throwIfNoEntry: false })?.isSymbolicLink(),
+    "foreign symlink (wrong target) must survive archive",
+  );
+});
+
+test("migrateOp leaves a foreign same-named symlink untouched (#17)", () => {
+  const vault = makeTmp();
+  const consumerDir = path.join(makeTmp(), "skills");
+  mkdirSync(consumerDir, { recursive: true });
+  makeConfig(vault, { claude: consumerDir });
+  const mine = path.join(vault, "oldshared");
+  mkdirSync(mine, { recursive: true });
+  writeFileSync(
+    path.join(mine, "SKILL.md"),
+    `---\nname: oldshared\ndescription: x\nstatus: draft\n---\n\n# oldshared\n`,
+  );
+  const foreign = path.join(makeTmp(), "oldshared");
+  mkdirSync(foreign, { recursive: true });
+  const link = path.join(consumerDir, "oldshared");
+  symlinkSync(foreign, link);
+
+  const out = migrateOp(vault, "oldshared", "newshared", true);
+  assert.equal(out.status, 0);
+  assert.ok(
+    lstatSync(link, { throwIfNoEntry: false })?.isSymbolicLink(),
+    "foreign symlink (wrong target) must survive migrate",
+  );
+});
+
+test("migrateOp rewrites only the frontmatter name, not a body 'name:' line (#18)", () => {
+  const vault = makeTmp();
+  makeConfig(vault, {});
+  const d = path.join(vault, "oldskill");
+  mkdirSync(d, { recursive: true });
+  // Frontmatter has NO name field; a body line starts with 'name:'.
+  writeFileSync(
+    path.join(d, "SKILL.md"),
+    `---\ndescription: x\n---\n\nExample frontmatter block:\nname: inner-example\n`,
+  );
+  const out = migrateOp(vault, "oldskill", "newskill", true);
+  assert.equal(out.status, 0);
+  const md = readFileSync(path.join(vault, "newskill", "SKILL.md"), "utf8");
+  assert.match(
+    md,
+    /^name: newskill$/m,
+    "frontmatter should carry the new name",
+  );
+  assert.match(md, /^name: inner-example$/m, "body line must be preserved");
+});
+
+test("restoreOp and bulkRestoreOp reject a path-traversal name (#35b)", () => {
+  const vault = vaultBare();
+  assert.match(restoreOp(vault, "../../evil", true).message, /invalid/i);
+  assert.match(bulkRestoreOp(vault, ["../../evil"], true).message, /invalid/i);
+});
+
+test("setFieldOp rejects a value containing a newline that would break frontmatter (#35a)", () => {
+  const vault = vaultBare();
+  const d = path.join(vault, "sk");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(
+    path.join(d, "SKILL.md"),
+    `---\nname: sk\ndescription: x\n---\n\n# sk\n`,
+  );
+  const out = setFieldOp(
+    vault,
+    "sk",
+    "domain",
+    "biz\n---\ninjected: true",
+    true,
+  );
+  assert.equal(out.status, 2);
+  assert.doesNotMatch(
+    readFileSync(path.join(d, "SKILL.md"), "utf8"),
+    /injected: true/,
+  );
+});
+
+test("bulkTaxonomyOp rejects a value containing a newline (#35a)", () => {
+  const vault = vaultBare();
+  const d = path.join(vault, "sk");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(
+    path.join(d, "SKILL.md"),
+    `---\nname: sk\ndescription: x\n---\n\n# sk\n`,
+  );
+  const out = bulkTaxonomyOp(vault, ["sk"], "domain", "biz\ninjected: 1", true);
+  assert.equal(out.status, 2);
 });

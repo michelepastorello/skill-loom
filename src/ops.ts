@@ -17,7 +17,7 @@ import {
   scanVault,
   type Skill,
 } from "./vault.js";
-import { applyPlan, planLinks, setSkillLinks } from "./linker.js";
+import { applyPlan, planLinks, setSkillLinks, resolveLink } from "./linker.js";
 
 export interface OpOutcome {
   status: 0 | 1 | 2;
@@ -138,6 +138,29 @@ function buildSkillMd(
 // this per selected skill). Replaces the field's line if present, else
 // inserts it at the end of the frontmatter block; dry-run when `apply` is
 // false, following the same pattern as migrateOp/archiveOp.
+// Set (or append) a frontmatter field, operating ONLY inside the `---...---`
+// block so a body line that happens to start with `field:` is never rewritten.
+// Returns the new file content, or null if there is no frontmatter block.
+function setFrontmatterField(
+  src: string,
+  field: string,
+  value: string,
+): string | null {
+  const m = /^(---\n)([\s\S]*?)(\n---\n)/.exec(src);
+  if (!m) return null;
+  const re = new RegExp(`^${field}:.*$`, "m");
+  const block = re.test(m[2])
+    ? m[2].replace(re, () => `${field}: ${value}`)
+    : `${m[2]}\n${field}: ${value}`;
+  return (
+    src.slice(0, m.index) +
+    m[1] +
+    block +
+    m[3] +
+    src.slice(m.index + m[0].length)
+  );
+}
+
 export function setFieldOp(
   vaultDir: string,
   name: string,
@@ -148,20 +171,15 @@ export function setFieldOp(
   const md = path.join(vaultDir, name, "SKILL.md");
   if (!existsSync(md))
     return { status: 2, message: `${name} not found`, actions: [] };
-  const src = readFileSync(md, "utf8");
-  const m = /^(---\n)([\s\S]*?)(\n---\n)/.exec(src);
-  if (!m) return { status: 2, message: `${name}: no frontmatter`, actions: [] };
-  let block = m[2];
-  const re = new RegExp(`^${field}:.*$`, "m");
-  block = re.test(block)
-    ? block.replace(re, () => `${field}: ${value}`)
-    : `${block}\n${field}: ${value}`;
-  const out =
-    src.slice(0, m.index) +
-    m[1] +
-    block +
-    m[3] +
-    src.slice(m.index + m[0].length);
+  if (/[\r\n]/.test(value))
+    return {
+      status: 2,
+      message: `${field} value must be a single line`,
+      actions: [],
+    };
+  const out = setFrontmatterField(readFileSync(md, "utf8"), field, value);
+  if (out === null)
+    return { status: 2, message: `${name}: no frontmatter`, actions: [] };
   const actions = [`set ${field}=${value} on "${name}"`];
   if (!apply)
     return { status: 0, message: "dry-run — nothing changed", actions };
@@ -181,7 +199,7 @@ const BULK_STATUSES = new Set([
 // before-mutate invariant: pass 1 dry-runs every member and, if any is invalid,
 // aborts with status 2 and the full offender list, writing nothing; pass 2
 // applies only when `apply` is true. Returns the aggregated actions.
-function bulkApply(
+export function bulkApply(
   names: string[],
   op: (name: string, apply: boolean) => OpOutcome,
   apply: boolean,
@@ -196,7 +214,30 @@ function bulkApply(
       actions: [],
     };
   const actions = dry.flatMap((x) => x.out.actions);
-  if (apply) for (const n of names) op(n, true);
+  if (apply) {
+    // Whole-set validation (pass 1) guarantees each item was valid; a failure
+    // here is a runtime error (fs, permissions, a race since the dry-run). Keep
+    // applying the rest and report which items failed instead of throwing or
+    // claiming blind success — the items are independent.
+    const failed: string[] = [];
+    for (const n of names) {
+      try {
+        const out = op(n, true);
+        if (out.status !== 0) failed.push(`${n}: ${out.message}`);
+      } catch (err) {
+        failed.push(
+          `${n}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    if (failed.length) {
+      return {
+        status: 1,
+        message: `applied ${names.length - failed.length}/${names.length}; failed: ${failed.join("; ")}`,
+        actions,
+      };
+    }
+  }
   return {
     status: 0,
     message: apply ? okMessage : "dry-run — nothing changed",
@@ -274,6 +315,12 @@ export function bulkTaxonomyOp(
     return { status: 2, message: "field must be domain or layer", actions: [] };
   if (!value)
     return { status: 2, message: `${field} value is required`, actions: [] };
+  if (/[\r\n]/.test(value))
+    return {
+      status: 2,
+      message: `${field} value must be a single line`,
+      actions: [],
+    };
   const cfg = loadConfig(vaultDir);
   const allowed =
     field === "domain" ? cfg.lint?.allowedDomains : cfg.lint?.allowedLayers;
@@ -319,7 +366,7 @@ export function bulkArchiveOp(
     };
   return bulkApply(
     names,
-    (n, a) => archiveOp(vaultDir, n, "", a),
+    (n, a) => archiveOp(vaultDir, n, a),
     apply,
     `archived ${names.length} skill(s)`,
   );
@@ -332,6 +379,13 @@ export function bulkRestoreOp(
   names: string[],
   apply: boolean,
 ): OpOutcome {
+  const invalid = names.filter((n) => !NAME_RE.test(n));
+  if (invalid.length)
+    return {
+      status: 2,
+      message: `invalid name(s): ${invalid.join(", ")} — must match ${NAME_RE}`,
+      actions: [],
+    };
   const missing = names.filter(
     (n) => !existsSync(path.join(vaultDir, ARCHIVE_DIR, n, "SKILL.md")),
   );
@@ -445,13 +499,12 @@ export function bulkRenameOp(
 export function archiveOp(
   vaultDir: string,
   name: string | undefined,
-  reason: string | undefined,
   apply: boolean,
 ): OpOutcome {
   if (!name) {
     return {
       status: 2,
-      message: "usage: skill-loom archive <name> [--reason <text>] [--apply]",
+      message: "usage: skill-loom archive <name> [--apply]",
       actions: [],
     };
   }
@@ -471,7 +524,12 @@ export function archiveOp(
   const links = resolveConsumers(cfg)
     .filter((c) => c.dir !== null)
     .map((c) => path.join(c.dir as string, name))
-    .filter((t) => lstatSync(t, { throwIfNoEntry: false })?.isSymbolicLink());
+    // Only unlink symlinks that actually resolve to THIS skill; a foreign
+    // same-named link (another vault's skill) must be left alone.
+    .filter((t) => {
+      const st = lstatSync(t, { throwIfNoEntry: false });
+      return st?.isSymbolicLink() && resolveLink(t) === path.resolve(skill.dir);
+    });
   const actions = [
     `move ${skill.dir} -> ${dest}`,
     ...links.map((l) => `unlink ${l}`),
@@ -543,14 +601,24 @@ export function migrateOp(
   }
   renameSync(skill.dir, newDir);
   const mdPath = path.join(newDir, "SKILL.md");
-  writeFileSync(
-    mdPath,
-    readFileSync(mdPath, "utf8").replace(/^name:.*$/m, `name: ${newName}`),
+  // Scope the name rewrite to the frontmatter block; a whole-file regex would
+  // hit a body line starting with `name:` when the frontmatter has none.
+  const migrated = setFrontmatterField(
+    readFileSync(mdPath, "utf8"),
+    "name",
+    newName,
   );
+  if (migrated !== null) writeFileSync(mdPath, migrated);
   for (const c of resolveConsumers(cfg)) {
     if (c.dir === null) continue;
     const oldTarget = path.join(c.dir, oldName);
-    if (lstatSync(oldTarget, { throwIfNoEntry: false })?.isSymbolicLink())
+    // skill.dir still holds the pre-rename path; only unlink the link that
+    // actually pointed at it, never a foreign same-named symlink.
+    const st = lstatSync(oldTarget, { throwIfNoEntry: false });
+    if (
+      st?.isSymbolicLink() &&
+      resolveLink(oldTarget) === path.resolve(skill.dir)
+    )
       unlinkSync(oldTarget);
   }
   applyPlan(
@@ -582,6 +650,13 @@ export function restoreOp(
     return {
       status: 2,
       message: "usage: skill-loom restore <name>",
+      actions: [],
+    };
+  }
+  if (!NAME_RE.test(name)) {
+    return {
+      status: 2,
+      message: `invalid skill name "${name}" — must match ${NAME_RE}`,
       actions: [],
     };
   }

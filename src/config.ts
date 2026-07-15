@@ -95,18 +95,106 @@ export function loadConfig(vaultDir: string): LoomConfig {
       `no ${CONFIG_NAME} in ${vaultDir} — run "skill-loom init" first`,
     );
   }
-  let raw: Partial<LoomConfig>;
+  let parsed: unknown;
   try {
-    raw = JSON.parse(readFileSync(file, "utf8")) as Partial<LoomConfig>;
+    parsed = JSON.parse(readFileSync(file, "utf8"));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new UsageError(`invalid ${CONFIG_NAME} in ${vaultDir}: ${message}`);
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new UsageError(
+      `invalid ${CONFIG_NAME} in ${vaultDir}: expected a JSON object`,
+    );
+  }
+  const raw = parsed as Partial<LoomConfig>;
+  const warn = (m: string) => console.error(`warning: ${CONFIG_NAME}: ${m}`);
+
+  // Consumers: keep only well-formed entries. A bad one (empty path, wrong
+  // type) is dropped with a warning so it can never silently create a stray
+  // symlink in the process CWD — the command still runs for the valid rest.
+  const consumers: Record<string, ConsumerValue> = {};
+  if (raw.consumers !== undefined) {
+    if (
+      typeof raw.consumers !== "object" ||
+      raw.consumers === null ||
+      Array.isArray(raw.consumers)
+    ) {
+      warn("consumers must be an object — ignoring it");
+    } else {
+      for (const [name, value] of Object.entries(raw.consumers)) {
+        if (typeof value === "string") {
+          if (value.trim()) consumers[name] = value;
+          else warn(`consumer "${name}" has an empty path — ignoring it`);
+        } else if (
+          value &&
+          typeof value === "object" &&
+          !Array.isArray(value)
+        ) {
+          const v = value as { mode?: string; path?: string };
+          if (
+            v.mode === "in-place" ||
+            (typeof v.path === "string" && v.path.trim())
+          ) {
+            consumers[name] = value as ConsumerValue;
+          } else {
+            warn(
+              `consumer "${name}" is neither in-place nor has a path — ignoring it`,
+            );
+          }
+        } else {
+          warn(`consumer "${name}" has an invalid value — ignoring it`);
+        }
+      }
+    }
+  }
+
+  let ignore = [...DEFAULT_IGNORE];
+  if (raw.ignore !== undefined) {
+    if (
+      Array.isArray(raw.ignore) &&
+      raw.ignore.every((x) => typeof x === "string")
+    ) {
+      ignore = raw.ignore;
+    } else {
+      warn("ignore must be an array of strings — using the default");
+    }
+  }
+
+  let names: Record<string, string> = {};
+  if (raw.names !== undefined) {
+    if (
+      typeof raw.names === "object" &&
+      raw.names !== null &&
+      !Array.isArray(raw.names)
+    ) {
+      names = raw.names;
+    } else {
+      warn("names must be an object — ignoring it");
+    }
+  }
+
+  // A lint block that isn't an object is silently ignored by the rest of the
+  // code (the gate just sees no fields), quietly disabling the rules you wrote —
+  // so that's a hard error. Semantic problems inside a valid lint object (e.g. a
+  // bad forbidBodyPatterns regex) are surfaced by `doctor` as findings, so we
+  // don't re-validate them here and steal that report.
+  if (
+    raw.lint !== undefined &&
+    (typeof raw.lint !== "object" ||
+      raw.lint === null ||
+      Array.isArray(raw.lint))
+  ) {
+    throw new UsageError(
+      `invalid ${CONFIG_NAME} in ${vaultDir}: lint must be an object`,
+    );
+  }
+
   return {
     schema: 1,
-    consumers: raw.consumers ?? {},
-    ignore: raw.ignore ?? [...DEFAULT_IGNORE],
-    names: raw.names ?? {},
+    consumers,
+    ignore,
+    names,
     ...(raw.lint ? { lint: raw.lint } : {}),
   };
 }

@@ -144,10 +144,13 @@ export function waiverReason(
   skillMdPath: string,
   waiverKey: string,
 ): string | null {
-  const keyRe = new RegExp(`^\\s*${waiverKey}:\\s*$`);
+  const keyRe = new RegExp(`^(\\s*)${waiverKey}:\\s*$`);
   const lines = readFileSync(skillMdPath, "utf8").split("\n");
   let inFrontmatter = false;
-  let underWaiver = false;
+  // Indent of the matched waiver key, or null when not inside its block. Reading
+  // reason: is scoped to lines indented deeper than the key, so a sibling
+  // waiver's reason: never leaks into a key that has none of its own.
+  let waiverIndent: number | null = null;
   for (const line of lines) {
     if (line.trim() === "---") {
       if (inFrontmatter) break;
@@ -155,11 +158,19 @@ export function waiverReason(
       continue;
     }
     if (!inFrontmatter) continue;
-    if (keyRe.test(line)) {
-      underWaiver = true;
+    const km = line.match(keyRe);
+    if (km) {
+      waiverIndent = km[1].length;
       continue;
     }
-    if (underWaiver) {
+    if (waiverIndent !== null) {
+      // A non-blank line at or below the key's indent is a sibling/parent key:
+      // the block is over.
+      const indent = line.match(/^(\s*)\S/);
+      if (indent && indent[1].length <= waiverIndent) {
+        waiverIndent = null;
+        continue;
+      }
       const m = line.match(/^\s*reason:\s*(.+?)\s*$/);
       if (m) {
         const v = m[1].replace(/^["']|["']$/g, "").trim();
@@ -304,27 +315,22 @@ export function skillWarnings(
 
     if (lint.descriptionMaxChars != null || lint.descriptionMinChars != null) {
       const desc = parseFrontmatterField(md, "description");
-      if (desc) {
-        if (
-          lint.descriptionMaxChars != null &&
-          desc.length > lint.descriptionMaxChars
-        ) {
-          warnings.push({
-            kind: "description-length",
-            name: s.name,
-            detail: `description ${desc.length} chars > ${lint.descriptionMaxChars}`,
-          });
-        }
-        if (
-          lint.descriptionMinChars != null &&
-          desc.length < lint.descriptionMinChars
-        ) {
-          warnings.push({
-            kind: "description-length",
-            name: s.name,
-            detail: `description ${desc.length} chars < ${lint.descriptionMinChars}`,
-          });
-        }
+      // An empty or absent description must still be measured against the
+      // minimum — a truthiness guard would skip exactly the worst case.
+      const len = desc == null ? 0 : desc.length;
+      if (lint.descriptionMaxChars != null && len > lint.descriptionMaxChars) {
+        warnings.push({
+          kind: "description-length",
+          name: s.name,
+          detail: `description ${len} chars > ${lint.descriptionMaxChars}`,
+        });
+      }
+      if (lint.descriptionMinChars != null && len < lint.descriptionMinChars) {
+        warnings.push({
+          kind: "description-length",
+          name: s.name,
+          detail: `description ${len} chars < ${lint.descriptionMinChars}`,
+        });
       }
     }
     if (lint.bodyMaxLines != null) {

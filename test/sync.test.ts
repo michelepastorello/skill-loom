@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { syncStatus, syncOp, syncFiles, setRemote } from "../src/sync.js";
+import {
+  syncStatus,
+  syncOp,
+  syncFiles,
+  setRemote,
+  pullFailureMessage,
+} from "../src/sync.js";
 import { makeTmp, makeSkill, makeConfig } from "./helpers.js";
 
 function git(dir: string, ...args: string[]) {
@@ -204,6 +210,17 @@ test("setRemote sets origin on a versioned vault; rejects empty/non-git", () => 
   assert.equal(setRemote(makeTmp(), "x", true).status, 2);
 });
 
+test("setRemote refuses a vault nested inside a larger repo (won't touch the parent origin)", () => {
+  const parent = makeTmp();
+  initRepo(parent);
+  const vault = path.join(parent, "vault");
+  mkdirSync(vault);
+  makeConfig(vault, {});
+  const r = setRemote(vault, "https://example.com/v.git", true);
+  assert.equal(r.status, 2);
+  assert.notEqual(git(parent, "remote", "get-url", "origin").status, 0);
+});
+
 test("syncFiles maps dirty, outgoing and incoming paths", () => {
   const { a, b } = twoClones();
   // outgoing: commit a change in A without pushing
@@ -226,4 +243,35 @@ test("syncFiles maps dirty, outgoing and incoming paths", () => {
   git(a, "fetch", "-q", "origin");
   const fa2 = syncFiles(a);
   assert.ok(fa2.incoming.includes("beta.md"));
+});
+
+test("syncOp attributes a git add failure to add, not a masked commit (#24)", () => {
+  const vault = makeTmp();
+  initRepo(vault);
+  makeConfig(vault, {});
+  makeSkill(vault, "cat", "alpha");
+  git(vault, "add", "-A");
+  git(vault, "commit", "-q", "-m", "base", "--no-verify");
+  writeFileSync(
+    path.join(vault, "cat", "alpha", "SKILL.md"),
+    "---\nname: alpha\ndescription: changed now\n---\n\n# alpha\n",
+  );
+  // Block the index so `git add -A` fails deterministically (root-safe: git
+  // refuses when index.lock already exists, regardless of file permissions).
+  writeFileSync(path.join(vault, ".git", "index.lock"), "");
+  const out = syncOp(vault, true, true);
+  assert.equal(out.status, 1);
+  assert.match(out.message, /^git add failed/);
+});
+
+test("pullFailureMessage separates a real rebase conflict from other failures (#23)", () => {
+  assert.match(
+    pullFailureMessage(true, { stderr: "", stdout: "" }),
+    /rebase stopped on a conflict/,
+  );
+  const other = pullFailureMessage(false, {
+    stderr: "fatal: Could not read from remote repository",
+    stdout: "",
+  });
+  assert.match(other, /^pull failed: fatal: Could not read from remote/);
 });

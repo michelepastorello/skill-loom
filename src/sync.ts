@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { realpathSync, existsSync } from "node:fs";
+import path from "node:path";
 import { hostname } from "node:os";
 import type { OpOutcome } from "./ops.js";
 import { collectDoctor } from "./gate.js";
@@ -45,11 +46,15 @@ export function vaultRepo(vaultDir: string): {
   return { inside: true, isRoot, root };
 }
 
-export function syncStatus(vaultDir: string, fetchFirst = false): SyncStatus {
+export function syncStatus(
+  vaultDir: string,
+  fetchFirst = false,
+  repo = vaultRepo(vaultDir),
+): SyncStatus {
   // Only treat the vault as versioned when it is the ROOT of its own repo.
   // If it merely sits inside a larger repo (e.g. the home dir), git would
   // report that repo's whole status — never surface that as the vault's.
-  if (!vaultRepo(vaultDir).isRoot) {
+  if (!repo.isRoot) {
     return {
       versioned: false,
       remote: null,
@@ -62,9 +67,11 @@ export function syncStatus(vaultDir: string, fetchFirst = false): SyncStatus {
   }
   const remoteOut = git(vaultDir, "remote", "get-url", "origin");
   const remote = remoteOut.status === 0 ? remoteOut.stdout.trim() : null;
-  const dirty = git(vaultDir, "status", "--porcelain")
-    .stdout.split("\n")
-    .filter(Boolean).length;
+  const statusOut = git(vaultDir, "status", "--porcelain");
+  const dirty =
+    statusOut.status === 0
+      ? statusOut.stdout.split("\n").filter(Boolean).length
+      : 0;
   let ahead = 0;
   let behind = 0;
   let incoming: string[] = [];
@@ -105,14 +112,18 @@ export interface SyncFiles {
 export function syncFiles(vaultDir: string): SyncFiles {
   if (!vaultRepo(vaultDir).isRoot)
     return { dirty: [], outgoing: [], incoming: [] };
-  const dirty = git(vaultDir, "status", "--porcelain")
-    .stdout.split("\n")
-    .filter(Boolean)
-    .map((l) => {
-      const p = l.slice(3).trim();
-      const i = p.indexOf(" -> "); // renames: keep the new path
-      return i >= 0 ? p.slice(i + 4) : p;
-    });
+  const statusOut = git(vaultDir, "status", "--porcelain");
+  const dirty =
+    statusOut.status !== 0
+      ? []
+      : statusOut.stdout
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => {
+            const p = l.slice(3).trim();
+            const i = p.indexOf(" -> "); // renames: keep the new path
+            return i >= 0 ? p.slice(i + 4) : p;
+          });
   const files = (range: string) => {
     const out = git(vaultDir, "log", "--name-only", "--format=", range);
     return out.status === 0
@@ -128,6 +139,18 @@ export function syncFiles(vaultDir: string): SyncFiles {
   };
 }
 
+// A failed `git pull --rebase` is only a conflict the user must resolve when a
+// rebase is actually in progress; every other cause (network, auth, missing
+// branch) needs its real error surfaced, not the "git rebase --continue" advice.
+export function pullFailureMessage(
+  rebasing: boolean,
+  pull: { stderr?: string; stdout?: string },
+): string {
+  return rebasing
+    ? 'rebase stopped on a conflict — resolve it in the vault, run "git rebase --continue", then sync again'
+    : `pull failed: ${(pull.stderr || pull.stdout || "").trim()}`;
+}
+
 export function syncOp(
   vaultDir: string,
   apply: boolean,
@@ -141,7 +164,7 @@ export function syncOp(
       actions: [],
     };
   }
-  const st = syncStatus(vaultDir, true);
+  const st = syncStatus(vaultDir, true, repo);
   if (!st.versioned) {
     return {
       status: 2,
@@ -181,7 +204,13 @@ export function syncOp(
         message: "dry-run — nothing changed",
         actions: localActions,
       };
-    git(vaultDir, "add", "-A");
+    const add = git(vaultDir, "add", "-A");
+    if (add.status !== 0)
+      return {
+        status: 1,
+        message: `git add failed: ${(add.stderr || add.stdout || "").trim()}`,
+        actions: localActions,
+      };
     const c = git(
       vaultDir,
       "commit",
@@ -214,7 +243,13 @@ export function syncOp(
   if (!apply)
     return { status: 0, message: "dry-run — nothing changed", actions };
   if (st.dirty > 0) {
-    git(vaultDir, "add", "-A");
+    const add = git(vaultDir, "add", "-A");
+    if (add.status !== 0)
+      return {
+        status: 1,
+        message: `git add failed: ${(add.stderr || add.stdout || "").trim()}`,
+        actions,
+      };
     const c = git(
       vaultDir,
       "commit",
@@ -233,10 +268,12 @@ export function syncOp(
   if (st.behind > 0) {
     const pull = git(vaultDir, "pull", "--rebase", "--no-edit", "origin");
     if (pull.status !== 0) {
+      const rebasing =
+        existsSync(path.join(vaultDir, ".git", "rebase-merge")) ||
+        existsSync(path.join(vaultDir, ".git", "rebase-apply"));
       return {
         status: 1,
-        message:
-          'rebase stopped on a conflict — resolve it in the vault, run "git rebase --continue", then sync again',
+        message: pullFailureMessage(rebasing, pull),
         actions,
       };
     }
@@ -261,9 +298,17 @@ export function setRemote(
   if (!trimmed) {
     return { status: 2, message: "a remote URL is required", actions: [] };
   }
-  const inside = git(vaultDir, "rev-parse", "--is-inside-work-tree");
-  if (inside.status !== 0) {
-    return { status: 2, message: "vault is not a git repository", actions: [] };
+  // Only operate on the vault's OWN repo. If vaultDir merely sits inside a
+  // larger repo (not its root), setting origin would mutate the parent's remote.
+  const repo = vaultRepo(vaultDir);
+  if (!repo.isRoot) {
+    return {
+      status: 2,
+      message: repo.inside
+        ? "vaultDir sits inside a larger git repo, not its own — refusing to set origin on the parent"
+        : "vault is not a git repository",
+      actions: [],
+    };
   }
   const has = git(vaultDir, "remote", "get-url", "origin").status === 0;
   const actions = [`${has ? "set" : "add"} origin -> ${trimmed}`];

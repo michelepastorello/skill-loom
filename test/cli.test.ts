@@ -10,7 +10,9 @@ import {
   rmSync,
 } from "node:fs";
 import path from "node:path";
-import { main } from "../src/main.js";
+import { main, opt } from "../src/main.js";
+import { runInit } from "../src/commands/init.js";
+import { runSync } from "../src/commands/sync.js";
 import { makeTmp, makeSkill, makeConfig } from "./helpers.js";
 
 test("main: no command prints usage and exits 2", () => {
@@ -70,6 +72,24 @@ test("init writes a .gitignore covering secrets, build artifacts and OS noise", 
   ]) {
     assert.ok(gi.includes(pat), `expected .gitignore to contain ${pat}`);
   }
+});
+
+test("init adds secret patterns to a pre-existing .gitignore", async () => {
+  const { runInit } = await import("../src/commands/init.js");
+  const vault = makeTmp();
+  writeFileSync(path.join(vault, ".gitignore"), "dist/\n");
+  runInit(vault);
+  const gi = readFileSync(path.join(vault, ".gitignore"), "utf8");
+  assert.ok(gi.includes("dist/"), "keeps existing entries");
+  for (const pat of [".env", "credentials/", "*.sqlite"]) {
+    assert.ok(gi.includes(pat), `expected secret pattern ${pat}`);
+  }
+});
+
+test("ui refuses a non-local --host without --allow-remote-writes", () => {
+  const vault = makeTmp();
+  makeConfig(vault, {});
+  assert.equal(main(["ui", "--host", "0.0.0.0"], vault), 2);
 });
 
 test("init scaffolds a CONVENTIONS.md starter", async () => {
@@ -222,15 +242,15 @@ test("archive: dry-run touches nothing; --apply moves the skill to .archive and 
   const { vault, consumerDir } = vaultWithConsumer();
   makeSkill(vault, "cat", "alpha");
   runLink(vault, true);
-  assert.equal(runArchive(vault, "alpha", "superseded", false), 0);
+  assert.equal(runArchive(vault, "alpha", false), 0);
   assert.ok(existsSync(path.join(vault, "cat", "alpha"))); // dry-run: untouched
-  assert.equal(runArchive(vault, "alpha", "superseded", true), 0);
+  assert.equal(runArchive(vault, "alpha", true), 0);
   assert.ok(existsSync(path.join(vault, ".archive", "alpha", "SKILL.md")));
   assert.ok(!existsSync(path.join(vault, "cat", "alpha")));
   assert.ok(
     !lstatSync(path.join(consumerDir, "alpha"), { throwIfNoEntry: false }),
   );
-  assert.equal(runArchive(vault, "alpha", undefined, true), 2); // not found anymore
+  assert.equal(runArchive(vault, "alpha", true), 2); // not found anymore
 });
 
 test("migrate: renames folder, rewrites frontmatter, re-links", async () => {
@@ -262,4 +282,51 @@ test("migrate: refuses when target directory already exists", async () => {
   mkdirSync2(path.join(vault, "cat", "taken"), { recursive: true });
   assert.equal(runMigrate(vault, "mover", "taken", true), 2);
   assert.ok(existsSync(path.join(vault, "cat", "mover")));
+});
+
+test("opt does not swallow a following flag as its value (#31)", () => {
+  const args = ["--domain", "--status", "active"];
+  assert.equal(opt(args, "--domain"), undefined); // no value given
+  assert.deepEqual(args, ["--status", "active"]); // --status survives
+  assert.equal(opt(args, "--status"), "active"); // and parses correctly
+});
+
+test("opt returns undefined for a trailing flag with no value (#31)", () => {
+  const args = ["--domain"];
+  assert.equal(opt(args, "--domain"), undefined);
+  assert.deepEqual(args, []);
+});
+
+test("opt still returns a normal value and consumes both tokens (#31)", () => {
+  const args = ["--domain", "biz", "rest"];
+  assert.equal(opt(args, "--domain"), "biz");
+  assert.deepEqual(args, ["rest"]);
+});
+
+test("runInit leaves no loom.json when a scaffold step fails, so it can be retried (#36)", () => {
+  const vault = makeTmp();
+  // Obstacle: .archive already exists as a file, so mkdirSync(.archive) throws
+  // mid-init. The re-entry guard (loom.json) must not be left behind.
+  writeFileSync(path.join(vault, ".archive"), "x");
+  assert.throws(() => runInit(vault));
+  assert.ok(!existsSync(path.join(vault, "loom.json")));
+});
+
+test("runInit reroots the vault as its own repo when nested in a larger one (#29)", () => {
+  const parent = makeTmp();
+  spawnSync("git", ["-C", parent, "init", "-q", "-b", "main"], {
+    encoding: "utf8",
+  });
+  const vault = path.join(parent, "vault");
+  mkdirSync2(vault, { recursive: true });
+  assert.equal(runInit(vault), 0);
+  // the vault gets its own .git rather than inheriting the parent repo
+  assert.ok(existsSync(path.join(vault, ".git")), "vault is its own repo root");
+});
+
+test("runSync propagates syncOp's exit status (#32)", () => {
+  const vault = makeTmp();
+  makeConfig(vault, {});
+  // not a git repo → syncOp returns 2; the CLI wrapper must pass it through
+  assert.equal(runSync(vault, false), 2);
 });

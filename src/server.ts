@@ -34,6 +34,7 @@ import {
   parseFrontmatterName,
   parseFirstH1,
   ARCHIVE_DIR,
+  NAME_RE,
   type Skill,
 } from "./vault.js";
 import {
@@ -311,11 +312,18 @@ async function readBody(
     chunks.push(chunk as Buffer);
   }
   const raw = Buffer.concat(chunks).toString("utf8") || "{}";
+  let parsed: unknown;
   try {
-    return JSON.parse(raw) as Record<string, unknown>;
+    parsed = JSON.parse(raw);
   } catch {
     throw new UsageError("invalid JSON body");
   }
+  // Every POST handler reads body.<field>; a valid-JSON non-object (null, an
+  // array, a primitive) would slip past the cast and crash at first access.
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new UsageError("request body must be a JSON object");
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function str(v: unknown): string | undefined {
@@ -329,14 +337,18 @@ function strArr(v: unknown): string[] | undefined {
   return v as string[];
 }
 
-function serveHtml(res: ServerResponse): void {
-  const htmlPath = path.join(
+// The UI ships as three sibling files next to the compiled server (ui.html +
+// ui.css + ui.js); serve each with its own content-type.
+function serveAsset(res: ServerResponse, file: string, mime: string): void {
+  const assetPath = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
-    "ui.html",
+    file,
   );
-  const html = readFileSync(htmlPath, "utf8");
-  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-  res.end(html);
+  res.writeHead(200, { "content-type": mime });
+  res.end(readFileSync(assetPath, "utf8"));
+}
+function serveHtml(res: ServerResponse): void {
+  serveAsset(res, "ui.html", "text/html; charset=utf-8");
 }
 
 const IMAGE_MIME: Record<string, string> = {
@@ -411,7 +423,10 @@ function listSkillFiles(
 }
 
 function findSkill(vaultDir: string, name: string | null): Skill | undefined {
-  if (!name) return undefined;
+  // Reject anything that isn't a valid skill name before it reaches a path
+  // join — otherwise a `..`-laden name escapes the vault via the archive
+  // fallback below (GET /api/skill and /api/file both resolve through here).
+  if (!name || !NAME_RE.test(name)) return undefined;
   const active = scanVault(vaultDir, loadConfig(vaultDir)).find(
     (s) => s.name === name,
   );
@@ -456,6 +471,14 @@ export function createUiServer(vaultDir: string): Server {
       const url = new URL(req.url ?? "/", "http://localhost");
       const route = `${req.method} ${url.pathname}`;
       if (route === "GET /") return serveHtml(res);
+      if (route === "GET /ui.css")
+        return serveAsset(res, "ui.css", "text/css; charset=utf-8");
+      if (route === "GET /ui.js")
+        return serveAsset(
+          res,
+          "ui.js",
+          "application/javascript; charset=utf-8",
+        );
       if (route === "GET /api/state")
         return sendJson(res, 200, buildState(vaultDir));
       if (route === "GET /api/diff")
@@ -517,12 +540,7 @@ export function createUiServer(vaultDir: string): Server {
         const body = await readBody(req);
         return sendOp(
           res,
-          archiveOp(
-            vaultDir,
-            str(body.name),
-            str(body.reason),
-            body.apply === true,
-          ),
+          archiveOp(vaultDir, str(body.name), body.apply === true),
           body.apply === true,
         );
       }
@@ -557,7 +575,9 @@ export function createUiServer(vaultDir: string): Server {
           // chips in the header and the metadata object in the rail.
           frontmatter: (() => {
             try {
-              const src = readFileSync(md, "utf8");
+              // Normalize CRLF: the frontmatter regex needs LF delimiters, and
+              // archived skills (browsable here) may carry CRLF endings.
+              const src = readFileSync(md, "utf8").replace(/\r\n/g, "\n");
               const fmM = /^---\n([\s\S]*?)\n---/.exec(src);
               return fmM ? fmM[1] : "";
             } catch {
@@ -568,7 +588,7 @@ export function createUiServer(vaultDir: string): Server {
           // Archived skills carry no live runtime links.
           states: archived
             ? []
-            : statusMatrix([skill], cfg).map((m) => ({
+            : statusMatrix([skill], cfg, vaultDir).map((m) => ({
                 consumer: m.consumer,
                 state: m.state,
               })),

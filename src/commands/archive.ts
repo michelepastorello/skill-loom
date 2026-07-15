@@ -4,10 +4,9 @@ import { dim } from "../output.js";
 export function runArchive(
   vaultDir: string,
   name: string | undefined,
-  reason: string | undefined,
   apply: boolean,
 ): number {
-  const out = archiveOp(vaultDir, name, reason, apply);
+  const out = archiveOp(vaultDir, name, apply);
   if (out.status !== 0) {
     console.error(out.message);
     return out.status;

@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import {
@@ -28,6 +34,22 @@ export const PRESETS: Record<string, string> = {
   vibe: "~/.vibe/skills",
 };
 
+// True only when vaultDir is the top level of its own git repo (not merely
+// nested inside a larger one).
+function isRepoRoot(vaultDir: string): boolean {
+  const out = spawnSync(
+    "git",
+    ["-C", vaultDir, "rev-parse", "--show-toplevel"],
+    { encoding: "utf8" },
+  );
+  if (out.status !== 0) return false;
+  try {
+    return realpathSync(out.stdout.trim()) === realpathSync(vaultDir);
+  } catch {
+    return false;
+  }
+}
+
 export function runInit(vaultDir: string): number {
   if (existsSync(path.join(vaultDir, CONFIG_NAME))) {
     console.error(`${CONFIG_NAME} already exists in ${vaultDir}`);
@@ -43,13 +65,19 @@ export function runInit(vaultDir: string): number {
     ignore: [...DEFAULT_IGNORE],
     names: {},
   };
-  saveConfig(vaultDir, cfg);
   mkdirSync(path.join(vaultDir, ARCHIVE_DIR), { recursive: true });
 
   // A vault is a git repo. Write a .gitignore (git doesn't read loom.json's
   // ignore list) and make the vault its OWN repo — even when it sits inside a
   // larger one (e.g. the home dir), git init here roots a separate repo so sync
   // never operates on the parent and lists unrelated files.
+  const SECRET_IGNORES = [
+    ".env",
+    ".env.*",
+    "credentials/",
+    "*.sqlite",
+    "*.sqlite-*",
+  ];
   const gitignore = path.join(vaultDir, ".gitignore");
   if (!existsSync(gitignore)) {
     // `sync --apply` does `git add -A`, so anything a tool-skill drops into the
@@ -59,11 +87,7 @@ export function runInit(vaultDir: string): number {
       gitignore,
       [
         "# Secrets & local state — the vault is committed and pushed.",
-        ".env",
-        ".env.*",
-        "credentials/",
-        "*.sqlite",
-        "*.sqlite-*",
+        ...SECRET_IGNORES,
         "",
         "# Build artifacts & caches",
         ".rt/",
@@ -79,6 +103,23 @@ export function runInit(vaultDir: string): number {
         "",
       ].join("\n"),
     );
+  } else {
+    // A .gitignore already exists — make sure it still ignores secrets, or a
+    // tool-skill's .env / credentials/ could be committed and pushed on sync.
+    const existing = readFileSync(gitignore, "utf8");
+    const present = new Set(existing.split("\n").map((l) => l.trim()));
+    const missing = SECRET_IGNORES.filter((p) => !present.has(p));
+    if (missing.length) {
+      const sep = existing.length && !existing.endsWith("\n") ? "\n" : "";
+      writeFileSync(
+        gitignore,
+        existing +
+          sep +
+          "\n# Secrets (added by skill-loom init)\n" +
+          missing.join("\n") +
+          "\n",
+      );
+    }
   }
 
   // A starter CONVENTIONS.md so a fresh vault documents how its skills are
@@ -157,21 +198,14 @@ export function runInit(vaultDir: string): number {
     );
   }
 
-  let isRoot = false;
-  const top = spawnSync(
-    "git",
-    ["-C", vaultDir, "rev-parse", "--show-toplevel"],
-    {
-      encoding: "utf8",
-    },
-  );
-  if (top.status === 0) {
-    try {
-      isRoot = realpathSync(top.stdout.trim()) === realpathSync(vaultDir);
-    } catch {
-      isRoot = false;
-    }
-  }
+  // Write loom.json last: it is the re-entry guard (init exits 2 if it already
+  // exists), so persisting it only after the fallible mkdir/writeFile scaffold
+  // steps means a mid-init failure leaves nothing behind and init can simply be
+  // re-run, instead of getting stuck "already exists" on a half-built vault. It
+  // still lands before the git add/commit below, so it is committed.
+  saveConfig(vaultDir, cfg);
+
+  const isRoot = isRepoRoot(vaultDir);
   if (!isRoot) {
     const r = spawnSync("git", ["-C", vaultDir, "init", "-q", "-b", "main"], {
       encoding: "utf8",
@@ -188,19 +222,9 @@ export function runInit(vaultDir: string): number {
   // its OWN repo — never commit into a parent repo (git init above reroots a
   // nested dir, so the success path is safe; guard the failure path). --no-verify
   // skips any hook inherited from an enclosing config.
-  const rootOut = spawnSync(
-    "git",
-    ["-C", vaultDir, "rev-parse", "--show-toplevel"],
-    { encoding: "utf8" },
-  );
-  let ownRepo = false;
-  if (rootOut.status === 0) {
-    try {
-      ownRepo = realpathSync(rootOut.stdout.trim()) === realpathSync(vaultDir);
-    } catch {
-      ownRepo = false;
-    }
-  }
+  // Already root, or made root by the git init above — only the latter needs a
+  // re-check, so short-circuit the redundant second rev-parse when isRoot held.
+  const ownRepo = isRoot || isRepoRoot(vaultDir);
   if (ownRepo) {
     spawnSync("git", ["-C", vaultDir, "add", "-A"], { encoding: "utf8" });
     const commit = spawnSync(

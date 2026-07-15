@@ -23,7 +23,7 @@ export interface PlanItem {
   detail: string;
 }
 
-function resolveLink(target: string): string {
+export function resolveLink(target: string): string {
   return path.resolve(path.dirname(target), readlinkSync(target));
 }
 
@@ -105,7 +105,7 @@ export interface StatusItem {
 export function statusMatrix(
   skills: Skill[],
   cfg: LoomConfig,
-  vaultDir?: string,
+  vaultDir: string,
 ): StatusItem[] {
   const items: StatusItem[] = [];
   for (const { name: consumer, mode, dir, servedVia } of resolveConsumers(
@@ -115,9 +115,7 @@ export function statusMatrix(
     // An in-place consumer serves every skill (read straight from the vault).
     // With a servedVia config we can check live activation; otherwise assume on.
     const active =
-      inPlace && servedVia && vaultDir
-        ? isServed(vaultDir, servedVia)
-        : inPlace;
+      inPlace && servedVia ? isServed(vaultDir, servedVia) : inPlace;
     for (const skill of skills) {
       if (!isActive(skill)) continue; // non-active skills are never unhealthy coverage rows
       if (inPlace) {

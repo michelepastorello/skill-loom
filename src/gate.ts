@@ -1,5 +1,12 @@
 import { loadConfig, type LintConfig } from "./config.js";
-import { scanVault, validateVault, skillWarnings, isActive } from "./vault.js";
+import {
+  scanVault,
+  validateVault,
+  skillWarnings,
+  isActive,
+  type Skill,
+  type SkillWarning,
+} from "./vault.js";
 import { orphanLinks, statusMatrix } from "./linker.js";
 
 // The vault's own rules, computed once, so both `doctor` (which prints) and
@@ -15,11 +22,30 @@ export interface DoctorReport {
   warnings: string[];
 }
 
+/** Split lint/hygiene findings into those the gate enforces (active skills and
+ *  config-level findings) and those that are always advisory (a known non-active
+ *  skill). Shared by collectDoctor and rulesImpact so the impact preview matches
+ *  what a real save enforces. A finding whose name matches no scanned skill is
+ *  NOT downgraded — it sits on the enforced path. */
+function partitionFindings(
+  skills: Skill[],
+  findings: SkillWarning[],
+): { enforced: SkillWarning[]; advisory: SkillWarning[] } {
+  const allNames = new Set(skills.map((s) => s.name));
+  const activeNames = new Set(skills.filter(isActive).map((s) => s.name));
+  const isAdvisory = (w: SkillWarning) =>
+    allNames.has(w.name) && !activeNames.has(w.name);
+  return {
+    enforced: findings.filter((w) => !isAdvisory(w)),
+    advisory: findings.filter(isAdvisory),
+  };
+}
+
 export function collectDoctor(vaultDir: string): DoctorReport {
   const cfg = loadConfig(vaultDir);
   const skills = scanVault(vaultDir, cfg);
   const problems = validateVault(skills);
-  const unhealthy = statusMatrix(skills, cfg).filter(
+  const unhealthy = statusMatrix(skills, cfg, vaultDir).filter(
     (m) => m.state === "broken" || m.state === "foreign",
   );
   const orphans = orphanLinks(vaultDir, cfg, skills);
@@ -33,19 +59,11 @@ export function collectDoctor(vaultDir: string): DoctorReport {
     ),
     ...orphans.map((o) => `orphan link: ${o}`),
   ];
-  // Strict lint enforcement (and blocking) only applies to active skills, or
-  // to findings with no skill at all (config-level, e.g. "(lint config)" for
-  // an invalid forbidBodyPatterns regex). Only a finding that names a real,
-  // known, non-active skill is advisory — a finding whose name matches no
-  // scanned skill is NOT downgraded just because it fails to match "active".
-  const allNames = new Set(skills.map((s) => s.name));
-  const activeNames = new Set(skills.filter(isActive).map((s) => s.name));
-  const advisoryFindings = findings.filter(
-    (w) => allNames.has(w.name) && !activeNames.has(w.name),
-  );
-  const blockPathFindings = findings.filter(
-    (w) => !(allNames.has(w.name) && !activeNames.has(w.name)),
-  );
+  // Strict lint enforcement (and blocking) only applies to active skills or to
+  // config-level findings; a known non-active skill is advisory. Shared with
+  // rulesImpact via partitionFindings so preview and enforcement never diverge.
+  const { enforced: blockPathFindings, advisory: advisoryFindings } =
+    partitionFindings(skills, findings);
   const line = (w: (typeof findings)[number]): string =>
     `${w.kind}: "${w.name}" — ${w.detail}`;
   // Hygiene findings block only under lint.strict, and only for
@@ -79,8 +97,13 @@ export function rulesImpact(
   const skills = scanVault(vaultDir, cfg);
   const flagged = (lint: LintConfig | undefined): Map<string, string> => {
     const m = new Map<string, string>();
-    for (const w of skillWarnings(skills, { ...cfg, lint }))
-      if (!m.has(w.name)) m.set(w.name, w.detail);
+    // Only findings the gate would actually enforce belong in the preview — a
+    // non-active skill is always advisory and never blocks (see collectDoctor).
+    const { enforced } = partitionFindings(
+      skills,
+      skillWarnings(skills, { ...cfg, lint }),
+    );
+    for (const w of enforced) if (!m.has(w.name)) m.set(w.name, w.detail);
     return m;
   };
   const cur = flagged(cfg.lint);

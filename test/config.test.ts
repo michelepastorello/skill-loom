@@ -153,3 +153,23 @@ test("validateLint rejects an invalid forbidden regex", () => {
 test("validateLint rejects a non-array allowedDomains", () => {
   assert.match(validateLint({ allowedDomains: "a" }) ?? "", /allowedDomains/);
 });
+
+test("loadConfig drops a consumer with an empty path and keeps the valid rest", () => {
+  const vault = mkdtempSync(path.join(tmpdir(), "loom-cfg-"));
+  writeFileSync(
+    path.join(vault, "loom.json"),
+    JSON.stringify({ schema: 1, consumers: { bad: "", good: "/tmp/x" } }),
+  );
+  const cfg = loadConfig(vault);
+  assert.equal(cfg.consumers.bad, undefined);
+  assert.equal(cfg.consumers.good, "/tmp/x");
+});
+
+test("loadConfig throws on an invalid lint block", () => {
+  const vault = mkdtempSync(path.join(tmpdir(), "loom-cfg-"));
+  writeFileSync(
+    path.join(vault, "loom.json"),
+    JSON.stringify({ schema: 1, consumers: {}, lint: "nope" }),
+  );
+  assert.throws(() => loadConfig(vault), UsageError);
+});

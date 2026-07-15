@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expandTilde, type ServedVia } from "./config.js";
+import { UsageError } from "./errors.js";
 
 // Two paths are the same directory once ~ is expanded and both are resolved.
 function sameDir(a: string, b: string): boolean {
@@ -47,22 +48,44 @@ export function setServed(
 ): { changed: boolean } {
   const file = expandTilde(sv.file);
   const text = existsSync(file) ? readFileSync(file, "utf8") : "{}\n";
-  const obj = JSON.parse(text) as Record<string, unknown>;
+  let obj: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("not an object");
+    }
+    obj = parsed as Record<string, unknown>;
+  } catch {
+    // Deactivating from an unparseable/foreign file is a safe no-op — there's
+    // nothing to remove. Activating needs a valid object to write into.
+    if (!on) return { changed: false };
+    throw new UsageError(`${file} is not a valid JSON object`);
+  }
   const parts = sv.jsonPath.split(".");
   let cur: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const k = parts[i];
     const next = cur[k];
-    if (next == null || typeof next !== "object" || Array.isArray(next)) {
+    if (next === undefined || next === null) {
       if (!on) return { changed: false }; // nothing to remove from
       cur[k] = {};
+    } else if (typeof next !== "object" || Array.isArray(next)) {
+      // Present but not a plain object — a hand-edited value we must not clobber.
+      if (!on) return { changed: false };
+      throw new UsageError(
+        `${file}: "${parts.slice(0, i + 1).join(".")}" is not an object`,
+      );
     }
     cur = cur[k] as Record<string, unknown>;
   }
   const leaf = parts[parts.length - 1];
-  if (!Array.isArray(cur[leaf])) {
+  const existing = cur[leaf];
+  if (existing === undefined || existing === null) {
     if (!on) return { changed: false };
     cur[leaf] = [];
+  } else if (!Array.isArray(existing)) {
+    if (!on) return { changed: false };
+    throw new UsageError(`${file}: "${sv.jsonPath}" is not an array`);
   }
   const arr = cur[leaf] as string[];
   const idx = arr.findIndex(

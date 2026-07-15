@@ -7,7 +7,7 @@ export function runStatus(vaultDir: string): number {
   const cfg = loadConfig(vaultDir);
   const skills = scanVault(vaultDir, cfg);
   const consumers = Object.keys(cfg.consumers);
-  const matrix = statusMatrix(skills, cfg);
+  const matrix = statusMatrix(skills, cfg, vaultDir);
   const rows: string[][] = [
     ["SKILL", ...consumers.map((c) => c.toUpperCase())],
   ];

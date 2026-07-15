@@ -87,7 +87,10 @@ test("statusMatrix: linked / missing / broken / foreign", () => {
   mkdirSync(path.join(consumerDir, "foreign-one"));
 
   const states = Object.fromEntries(
-    statusMatrix(scanVault(vault, cfg), cfg).map((s) => [s.skill, s.state]),
+    statusMatrix(scanVault(vault, cfg), cfg, vault).map((s) => [
+      s.skill,
+      s.state,
+    ]),
   );
   assert.deepEqual(states, {
     "linked-one": "linked",
@@ -165,7 +168,7 @@ test("in-place consumers are served in place, never symlinked", () => {
   );
 
   // statusMatrix: in-place → "served"; symlink not linked yet → "missing"
-  const st = statusMatrix(skills, cfg);
+  const st = statusMatrix(skills, cfg, vault);
   assert.equal(
     st.find((s) => s.consumer === "openclaw" && s.skill === "alpha")?.state,
     "served",
@@ -182,4 +185,27 @@ test("in-place consumers are served in place, never symlinked", () => {
   const r = setSkillLinks(skills, cfg, "openclaw", "alpha", true, true);
   assert.equal(r.actions.length, 0);
   assert.equal(r.skipped.length, 1);
+});
+
+test("statusMatrix: in-place consumer with servedVia is 'missing' when the vault is not registered", () => {
+  const vault = makeTmp();
+  const svFile = path.join(makeTmp(), "served.json");
+  const base = makeConfig(vault, {});
+  const cfg = {
+    ...base,
+    consumers: {
+      openclaw: {
+        mode: "in-place" as const,
+        servedVia: { file: svFile, jsonPath: "served" },
+      },
+    },
+  };
+  makeSkill(vault, "c", "alpha");
+  const skills = scanVault(vault, cfg);
+  // vault is NOT registered in svFile → isServed() false → "missing", not "served"
+  const st = statusMatrix(skills, cfg, vault);
+  assert.equal(
+    st.find((s) => s.consumer === "openclaw" && s.skill === "alpha")?.state,
+    "missing",
+  );
 });

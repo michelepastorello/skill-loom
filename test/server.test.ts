@@ -780,3 +780,134 @@ test("POST /api/bulk/rename applies a prefix transform", async () => {
   assert.equal(bad.status, 400);
   server.close();
 });
+
+test("readBody rejects a non-object JSON body with 400, not a 500 crash (#15)", async () => {
+  const { vault } = uiVault();
+  makeSkill(vault, "biz", "demo");
+  const { server, base } = await start(vault);
+  // A valid-JSON but non-object body (null) used to reach the handler and crash
+  // it at body.<field> (→ 500). It must be rejected up front as a 400.
+  const r = await postJson(base, "/api/link-toggle", null);
+  assert.equal(r.status, 400);
+  const j = (await r.json()) as { error?: string };
+  assert.match(j.error ?? "", /object/);
+  server.close();
+});
+
+test("GET /api/skill rejects a path-traversal name (#34)", async () => {
+  const vault = makeTmp();
+  const consumerDir = path.join(makeTmp(), "skills");
+  makeConfig(vault, { claude: consumerDir });
+  // A SKILL.md reachable from .archive only via `..` traversal.
+  const escaped = path.join(vault, "escaped");
+  mkdirSync(escaped, { recursive: true });
+  writeFileSync2(
+    path.join(escaped, "SKILL.md"),
+    "---\nname: escaped\ndescription: x\n---\n\n# escaped\n",
+  );
+  const { server, base } = await start(vault);
+  const r = await fetch(
+    `${base}/api/skill?name=${encodeURIComponent("../escaped")}`,
+  );
+  assert.equal(r.status, 404);
+  server.close();
+});
+
+test("GET /api/skill returns the frontmatter block for a CRLF SKILL.md (#16)", async () => {
+  const vault = makeTmp();
+  const consumerDir = path.join(makeTmp(), "skills");
+  makeConfig(vault, { claude: consumerDir });
+  const dir = path.join(vault, "biz", "crlf-skill");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync2(
+    path.join(dir, "SKILL.md"),
+    "---\r\nname: crlf-skill\r\ndescription: x\r\n---\r\n\r\n# CRLF\r\n",
+  );
+  const { server, base } = await start(vault);
+  const j = (await (
+    await fetch(`${base}/api/skill?name=crlf-skill`)
+  ).json()) as { frontmatter: string };
+  assert.match(j.frontmatter, /name: crlf-skill/);
+  server.close();
+});
+
+test("POST /api/consumers adds a runtime and rejects a bad name (#34)", async () => {
+  const { vault } = uiVault();
+  const { server, base } = await start(vault);
+  const ok = (await (
+    await postJson(base, "/api/consumers", { name: "vibe", path: "/tmp/x" })
+  ).json()) as { consumers: Record<string, string> };
+  assert.equal(ok.consumers.vibe, "/tmp/x");
+  const bad = await postJson(base, "/api/consumers", {
+    name: "Bad Name",
+    path: "/tmp/x",
+  });
+  assert.equal(bad.status, 400);
+  server.close();
+});
+
+test("POST /api/names edits the casing map and validates the word (#34)", async () => {
+  const { vault } = uiVault();
+  const { server, base } = await start(vault);
+  const ok = (await (
+    await postJson(base, "/api/names", { word: "api", cased: "API" })
+  ).json()) as { names: Record<string, string> };
+  assert.equal(ok.names.api, "API");
+  const bad = await postJson(base, "/api/names", {
+    word: "two words",
+    cased: "X",
+  });
+  assert.equal(bad.status, 400);
+  server.close();
+});
+
+test("POST /api/bulk/{taxonomy,archive,restore} dry-run and validation (#34)", async () => {
+  const { vault } = uiVault();
+  // Flat skill (vault/<name>): setFieldOp/bulkTaxonomyOp resolve vault/<name>.
+  const d = path.join(vault, "alpha");
+  mkdirSync(d, { recursive: true });
+  writeFileSync2(
+    path.join(d, "SKILL.md"),
+    "---\nname: alpha\ndescription: test skill\n---\n\n# alpha\n",
+  );
+  const { server, base } = await start(vault);
+  const tax = await postJson(base, "/api/bulk/taxonomy", {
+    names: ["alpha"],
+    field: "domain",
+    value: "biz",
+    apply: false,
+  });
+  assert.equal(tax.status, 200); // dry-run ok
+  const taxBad = await postJson(base, "/api/bulk/taxonomy", {
+    names: ["alpha"],
+    field: "nope",
+    value: "biz",
+  });
+  assert.equal(taxBad.status, 400);
+  const arch = await postJson(base, "/api/bulk/archive", {
+    names: ["alpha"],
+    apply: false,
+  });
+  assert.equal(arch.status, 200);
+  const restBad = await postJson(base, "/api/bulk/restore", { names: [] });
+  assert.equal(restBad.status, 400);
+  server.close();
+});
+
+test("GET /api/doc-history and /api/doc-commit validate name and hash (#34)", async () => {
+  const { vault } = uiVault();
+  const { server, base } = await start(vault);
+  assert.equal(
+    (await fetch(`${base}/api/doc-history?name=loom.json`)).status,
+    200,
+  );
+  assert.equal(
+    (await fetch(`${base}/api/doc-history?name=../escape`)).status,
+    400,
+  );
+  assert.equal(
+    (await fetch(`${base}/api/doc-commit?name=loom.json&hash=zzz`)).status,
+    400,
+  );
+  server.close();
+});
