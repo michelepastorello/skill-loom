@@ -223,8 +223,9 @@ if __name__ == "__main__":
     main()
 `;
 
-// Orthogonal taxonomy for the demo: domain mirrors the folder, layer is the
-// kind of work the skill does. One suspended skill shows the lifecycle chip.
+// Orthogonal taxonomy for the demo: domain groups the skills, layer is the kind
+// of work each one does. A spread of lifecycle states shows all five chips (an
+// absent status reads as active).
 const LAYER = {
   "code-review": "review",
   "commit-message": "authoring",
@@ -240,7 +241,13 @@ const LAYER = {
   "market-brief": "analysis",
   "competitor-scan": "analysis",
 };
-const STATUS = { "competitor-scan": "suspended" };
+const STATUS = {
+  "blog-draft": "draft",
+  "market-brief": "draft",
+  "paper-summary": "idea",
+  "competitor-scan": "suspended",
+  "sql-review": "deprecated",
+};
 
 function frontmatter(name, icon, color, desc, domain) {
   const fm = [`name: ${name}`, `domain: ${domain}`, `layer: ${LAYER[name]}`];
@@ -277,8 +284,10 @@ function git(args, date) {
 }
 
 // ── commit 1: all skills, code-review still single-file ─────────────────────
+// The vault is flat: one folder per skill at the root; `domain` (not a nested
+// category directory) drives grouping.
 for (const [cat, name, icon, color, desc] of SKILLS) {
-  const dir = path.join(ROOT, cat, name);
+  const dir = path.join(ROOT, name);
   mkdirSync(dir, { recursive: true });
   const body = name === "code-review" ? CR_BASE : genericBody(name, desc);
   writeFileSync(
@@ -286,6 +295,15 @@ for (const [cat, name, icon, color, desc] of SKILLS) {
     `${frontmatter(name, icon, color, desc, cat)}\n${body}`,
   );
 }
+// An in-place runtime reads its skill dirs from its own config instead of a
+// symlinked directory; register the vault there so the detail page's in-place
+// toggle reads as served.
+const rtInplace = path.join(ROOT, ".rt/openclaw.json");
+mkdirSync(path.dirname(rtInplace), { recursive: true });
+writeFileSync(
+  rtInplace,
+  JSON.stringify({ skills: { load: { extraDirs: [ROOT] } } }, null, 2) + "\n",
+);
 writeFileSync(
   path.join(ROOT, "loom.json"),
   JSON.stringify(
@@ -294,9 +312,12 @@ writeFileSync(
       consumers: {
         claude: path.join(ROOT, ".rt/claude"),
         codex: path.join(ROOT, ".rt/codex"),
+        openclaw: {
+          mode: "in-place",
+          servedVia: { file: rtInplace, jsonPath: "skills.load.extraDirs" },
+        },
       },
       ignore: [".git", "node_modules", ".rt"],
-      archived: [],
     },
     null,
     2,
@@ -310,7 +331,7 @@ git(
 );
 
 // ── commit 2: add a security checklist to code-review ───────────────────────
-const crSkill = path.join(ROOT, "engineering/code-review/SKILL.md");
+const crSkill = path.join(ROOT, "code-review/SKILL.md");
 appendFileSync(crSkill, CR_CHECKLIST);
 git(["add", "-A"]);
 git(
@@ -319,7 +340,7 @@ git(
 );
 
 // ── commit 3: extract checklist to references, add the review runner ────────
-const crDir = path.join(ROOT, "engineering/code-review");
+const crDir = path.join(ROOT, "code-review");
 writeFileSync(
   crSkill,
   `${frontmatter("code-review", "git-branch", null, SKILLS[0][4], "engineering")}\n${CR_ENRICHED}`,

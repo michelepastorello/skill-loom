@@ -27,7 +27,9 @@ const skill = process.argv[4]; // optional: open this skill's detail view first
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({
-  viewport: { width: 1360, height: 880 },
+  // 1600 wide so the ledger's taxonomy chips (domain/layer) never truncate;
+  // 2× keeps the capture crisp. Long descriptions still ellipsize, as intended.
+  viewport: { width: 1600, height: 880 },
   deviceScaleFactor: 2,
   colorScheme: "dark",
 });

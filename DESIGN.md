@@ -39,23 +39,23 @@ harmonized with the accent into one temperature family.
 Semantic hue families (ok=green, warn=amber, err=red) are reserved for state;
 the accent stays out of them. Soft variants = same hue at ~10-16% alpha.
 
-**Category accents** (library scan): each category carries a hue on the
-skill-tile fill + section legend dot, so the grid scans by category at a glance
-without touching data. The hue is derived from the category name (`catStyle` in
-JS: a stable hash into an 8-hue palette) so any vault's categories get colour —
-the palette stays clear of the state bands (green 160 / amber 68 / red 25).
-Tokens `--cat` / `--cat-soft` are set inline per section; a fixed mid-lightness
-that reads on both themes (like the per-skill `icon-color` overrides). The state
-badge on a card shows only when health deviates (attention/inactive); an active
-skill shows no badge, so exceptions are the only cards that light up.
+**Taxonomy accents** (library scan): each domain/layer value carries a hue on the
+section legend dot + group chip, so the grid scans by taxonomy at a glance without
+touching data. The hue is rank-based over the axis's sorted values (`taxHueStyle`
+in JS: 8-hue palette `TAX_HUES`, stride-3 so adjacent values sit far apart on the
+wheel) — the palette stays clear of the state bands (green 160 / amber 68 /
+red 25). Tokens `--tint` / `--tint-soft` carry it, at a fixed mid-lightness that
+reads on both themes. The state badge on a card shows only when health deviates
+(attention/inactive); an active skill shows no badge, so exceptions are the only
+cards that light up.
 
 **Skill tiles** (NotePlan model): each card/detail header carries a rounded tile.
 Frontmatter `icon: <name>` picks a line-icon from an inline Lucide-style registry
 (`ICONS` in `ui.html`); no `icon:` falls back to the skill's monogram. Optional
-`icon-color: <family>-<step>` (Tailwind-ish token, e.g. `emerald-500`) overrides
-the tile hue for that one skill via `namedColor()` → fixed OKLCH (theme-independent,
-like NotePlan); absent, the tile inherits its category accent. So category color is
-the default scan signal and per-skill icon+color is opt-in personality.
+`icon-color: <family>-<step>` (Tailwind-ish token, e.g. `emerald-500`) sets the
+tile hue for that one skill via `namedColor()` → fixed OKLCH (theme-independent,
+like NotePlan); absent, the tile stays neutral. The vault is flat (no categories),
+so tile colour is opt-in per skill, not derived from a folder.
 
 ## Typography
 
@@ -66,10 +66,13 @@ identifiers, paths, hashes, code.
 
 ## Layout
 
-Two nav destinations: **My skills** (full-width category card grid) and **Status**
-(the merged housekeeping surface: unsaved changes + sync + link health). Sub-views:
-**Skill detail** is a full-bleed three-pane (files · document · runtimes+history);
-**New skill**, **Settings**, **Archived** are focused/bounded. Scrolling views vs
+Nav destinations: **My skills** (full-width category card grid), **Status** (the
+merged housekeeping surface: unsaved changes + sync + link health), and **Config**.
+Config is a settings console: a left rail of sections (Rules, Vault, Runtimes,
+Naming, Sync) plus read-only Reference (CONVENTIONS.md, source-registry.yaml,
+loom.json), with the selected section in the right pane. Sub-views: **Skill
+detail** is a full-bleed three-pane (files · document · runtimes+history); **New
+skill** and **Archived** are focused/bounded. Scrolling views vs
 full-bleed fixed views (`body.fixed` for detail + status). Space is partitioned into
 regions (main + rail) rather than left-stacked — no dead width.
 

@@ -13,11 +13,15 @@ two scripts that reproduce it, so the screenshots stay regenerable on any clone.
 node demo/scaffold-demo.mjs
 ```
 
-This writes `demo/demo-vault/` with all 13 skills, a 3-commit git history (so the
-detail page's History panel is populated), and links every skill into a `claude`
-and `codex` runtime (so the "Active on" toggles read as on). `code-review` is the
-one multi-file skill — it carries the grouped file-panel demo (`SKILL.md` +
-`requirements.txt` at the root, `references/checklist.md`, `scripts/run-review.py`).
+This writes a flat `demo/demo-vault/` (one folder per skill) with all 13 skills, a
+3-commit git history (so the detail page's History panel is populated), a spread
+of lifecycle states across the five chips (idea / draft / active / suspended /
+deprecated), and three runtimes: `claude` and `codex` as symlink consumers, plus
+an in-place `openclaw` that reads the vault straight from its own config (so the
+detail page shows the in-place toggle). Active skills link into all three;
+non-active ones stay unprojected. `code-review` is the one multi-file skill — it
+carries the grouped file-panel demo (`SKILL.md` + `requirements.txt` at the root,
+`references/checklist.md`, `scripts/run-review.py`).
 
 ## Serve it
 
