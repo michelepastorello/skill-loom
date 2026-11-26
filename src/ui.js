@@ -1197,7 +1197,7 @@ function renderRailHtml() {
     return m;
   };
   const seg = (a, lbl) =>
-    `<button data-axis="${a}"${groupAxis === a ? ' class="on"' : ""} type="button">${lbl}</button>`;
+    `<button data-axis="${esc(a)}"${groupAxis === a ? ' class="on"' : ""} type="button">${esc(lbl)}</button>`;
   const item = (kind, v, label, count, on, style) =>
     `<button class="ritem${on ? " on" : ""}" data-kind="${kind}" data-v="${esc(v)}" style="${style}" type="button"><span class="d"></span>${esc(label)}<span class="n">${count}</span></button>`;
   const sc = counts("status");

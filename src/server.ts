@@ -687,29 +687,39 @@ function findSkill(vaultDir: string, name: string | null): Skill | undefined {
  *  Empty directories are dropped: the format can carry them and no extractor
  *  needs them, since parents are created from the file paths. A symlink to a
  *  file is followed and its content copied — that is what "give me this skill"
- *  means; a symlink to a directory is skipped rather than walked into a
- *  possible loop. */
+ *  means — but only while it resolves inside the skill folder, the same
+ *  containment GET /api/file applies: a link to ~/.ssh or to another skill is
+ *  left out of the archive instead of being handed over the network. A symlink
+ *  to a directory is skipped rather than walked into a possible loop. */
 function collectFiles(
   dir: string,
   prefix: string,
   out: ZipEntry[],
   budget: { left: number },
+  root: string = realpathSync(dir),
 ): void {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, e.name);
     const rel = `${prefix}/${e.name}`;
     if (e.isDirectory()) {
-      collectFiles(abs, rel, out, budget);
+      collectFiles(abs, rel, out, budget, root);
       continue;
     }
-    const st = statSync(abs, { throwIfNoEntry: false });
+    let real: string;
+    try {
+      real = realpathSync(abs);
+    } catch {
+      continue; // a dangling link has nothing to copy
+    }
+    if (!real.startsWith(root + path.sep)) continue;
+    const st = statSync(real, { throwIfNoEntry: false });
     if (!st || !st.isFile()) continue;
     if (st.size > budget.left)
       throw new UsageError(
         "that is more than the export limit; take it from the vault directly",
       );
     budget.left -= st.size;
-    out.push({ path: rel, data: readFileSync(abs), mtime: st.mtime });
+    out.push({ path: rel, data: readFileSync(real), mtime: st.mtime });
   }
 }
 

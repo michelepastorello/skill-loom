@@ -429,6 +429,26 @@ test("GET /api/skill hides git-ignored files, keeps untracked ones", async () =>
   server.close();
 });
 
+test("GET /api/export keeps in-skill symlinks and drops ones that escape the skill", async () => {
+  const { vault } = uiVault();
+  const dir = makeSkill(vault, "cat", "alpha");
+  const outside = path.join(makeTmp(), "secret.txt");
+  writeFileSync2(outside, "not for the archive");
+  symlinkSync2(path.join(dir, "SKILL.md"), path.join(dir, "inner-link.md"));
+  symlinkSync2(outside, path.join(dir, "escape.md"));
+  symlinkSync2(path.join(dir, "missing.md"), path.join(dir, "dangling.md"));
+  const { server, base } = await start(vault);
+  const res = await fetch(`${base}/api/export?name=alpha`);
+  assert.equal(res.status, 200);
+  const zipText = Buffer.from(await res.arrayBuffer()).toString("latin1");
+  assert.ok(zipText.includes("alpha/SKILL.md"));
+  assert.ok(zipText.includes("alpha/inner-link.md"));
+  assert.ok(!zipText.includes("alpha/escape.md"));
+  assert.ok(!zipText.includes("alpha/dangling.md"));
+  assert.ok(!zipText.includes("not for the archive"));
+  server.close();
+});
+
 test("GET /api/file serves text, blocks traversal and symlink escape", async () => {
   const { vault } = uiVault();
   const dir = makeSkill(vault, "cat", "alpha");
