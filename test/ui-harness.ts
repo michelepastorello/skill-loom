@@ -11,59 +11,25 @@ const uiScript = readFileSync(
   "utf8",
 );
 
-// Return the full `function NAME(...) {...}` source by matching balanced braces.
-// String- and comment-aware so braces inside "...", '...', // and /* */ don't
-// throw off the depth count. It does NOT parse `${}` inside template literals,
-// so only extract functions whose bodies use no template literals (the pure
-// view-logic helpers we test don't).
+// Return the full `function NAME(...) {...}` source, from the declaration to
+// the closing brace in column 0.
+//
+// The earlier version counted braces while tracking strings and comments, but
+// a hand-rolled scanner cannot tell a regex literal from a division operator:
+// renderMd's inline() holds /`([^`]+)`/g, whose backticks were read as a
+// template literal and swallowed the rest of the function. src/ui.js is
+// prettier-formatted, so every top-level function ends at a lone `}` at the
+// start of a line and nothing nested ever does — that is the reliable rule
+// here, and it is immune to strings, comments, escapes and regexes alike.
 export function extractFnSource(name: string): string {
-  const start = uiScript.indexOf(`function ${name}(`);
+  const decl = `function ${name}(`;
+  const start = uiScript.indexOf(decl);
   if (start < 0) throw new Error(`function ${name} not found in ui.js`);
-  let i = uiScript.indexOf("{", start);
-  if (i < 0) throw new Error(`no body found for function ${name}`);
-  let depth = 0;
-  let inStr: string | null = null;
-  let inLine = false;
-  let inBlock = false;
-  for (; i < uiScript.length; i++) {
-    const c = uiScript[i];
-    const prev = uiScript[i - 1];
-    if (inLine) {
-      if (c === "\n") inLine = false;
-      continue;
-    }
-    if (inBlock) {
-      if (c === "*" && uiScript[i + 1] === "/") {
-        inBlock = false;
-        i++;
-      }
-      continue;
-    }
-    if (inStr) {
-      if (c === inStr && prev !== "\\") inStr = null;
-      continue;
-    }
-    if (c === "/" && uiScript[i + 1] === "/") {
-      inLine = true;
-      i++;
-      continue;
-    }
-    if (c === "/" && uiScript[i + 1] === "*") {
-      inBlock = true;
-      i++;
-      continue;
-    }
-    if (c === "'" || c === '"' || c === "`") {
-      inStr = c;
-      continue;
-    }
-    if (c === "{") depth++;
-    else if (c === "}") {
-      depth--;
-      if (depth === 0) return uiScript.slice(start, i + 1);
-    }
-  }
-  throw new Error(`unbalanced braces extracting function ${name}`);
+  if (start > 0 && uiScript[start - 1] !== "\n")
+    throw new Error(`function ${name} is not top-level in ui.js`);
+  const end = uiScript.indexOf("\n}\n", start);
+  if (end < 0) throw new Error(`no closing brace found for function ${name}`);
+  return uiScript.slice(start, end + 3);
 }
 
 export interface UiCtx {
@@ -74,9 +40,15 @@ export interface UiCtx {
 // Load the named ui.js functions into a fresh vm context. Free `state`
 // references inside them resolve to `ctx.state`, so tests set `ctx.state = ...`
 // before each call. Returns the context; call fns as `ctx.linkStateOf(...)`.
-export function loadUiFns(names: string[]): UiCtx {
+// `seed` pre-populates the context with values the extracted functions
+// reference but that aren't `function` declarations (module-level consts) or
+// that pull in machinery a unit test doesn't exercise (syntax highlighting).
+export function loadUiFns(
+  names: string[],
+  seed: Record<string, unknown> = {},
+): UiCtx {
   const src = names.map(extractFnSource).join("\n\n");
-  const ctx: UiCtx = { state: undefined };
+  const ctx: UiCtx = { state: undefined, ...seed };
   vm.createContext(ctx);
   vm.runInContext(src, ctx);
   return ctx;

@@ -1,6 +1,6 @@
 {
   "name": "skill-loom",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "One canonical, git-versioned vault of agent skills, symlinked into every runtime (Claude Code, Codex, custom).",
   "type": "module",
   "bin": {
@@ -15,7 +15,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc && cp src/ui.html src/ui.css src/ui.js dist/src/",
+    "build": "tsc && node scripts/gen-icons.mjs && cp src/ui.html src/ui.css src/ui.js src/favicon.ico src/favicon-32.png src/favicon-16.png src/apple-touch-icon.png node_modules/mermaid/dist/mermaid.min.js dist/src/",
     "test": "npm run build && node --test 'dist/test/**/*.test.js'",
     "prepublishOnly": "npm test"
   },
@@ -40,6 +40,8 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.0",
+    "lucide-static": "1.24.0",
+    "mermaid": "^11.16.0",
     "typescript": "^6.0.3"
   }
 }

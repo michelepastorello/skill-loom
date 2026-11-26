@@ -7,6 +7,36 @@ let curView = "skills",
 let currentFile = null,
   currentFileData = null,
   viewMode = "rendered";
+// The open vault skill's file listing, kept so the gallery can be drawn from
+// what the rail already has instead of asking the server for the skill again.
+// The read-only source keeps its own on srcSkill.
+let curFiles = [];
+// Read-only browse of other skill sources. A source is a runtime (.agents,
+// .claude, …); inside it, skills are grouped by what they were installed as.
+// "personal" is the managed vault; anything else is view-only.
+let curSource = "personal";
+let sources = [];
+// Whether the source list is split into its groups. On by default: these skills
+// arrive in batches, so the batch is how you look for them.
+let srcGrouped = true;
+// The rail facet in force, as a group key ("" = no filter). Independent of the
+// grouping: you can narrow to one plugin in either view.
+let srcFilter = "";
+// The group of the open source skill. Part of its identity, not decoration: two
+// plugins can each ship a "runbook", and the server needs the group to know
+// which one to open.
+let srcGroup = "";
+// The source's skills in the order the list shows them, flattened across
+// collections. Arrow navigation in a source detail reads it, so it can leave
+// the collection the rail is showing.
+let srcOrder = [];
+// The open source skill. The file it shows rides on currentFile /
+// currentFileData, the same state the vault viewer uses, so setMode and
+// renderPlain (highlighting, images, binaries) serve both.
+let srcSkill = null;
+// Keyboard cursor for the read-only source list: { name, group } of the
+// highlighted row (Enter opens). State, so it survives the search re-render.
+let srcCursor = null;
 
 function esc(s) {
   return String(s).replace(
@@ -118,60 +148,6 @@ function promptDialog(title, value = "", okLabel = "OK") {
     input.select();
   });
 }
-// Collects a rename pattern transform for a multi-select. Resolves to
-// { op, value } | { op, from, to } or null on cancel. The label of the first
-// field and the visibility of the second track the chosen op.
-function renameTransformDialog(count) {
-  return new Promise((resolve) => {
-    const dlg = $("#renamebulk"),
-      op = $("#rb-op"),
-      a = $("#rb-a"),
-      b = $("#rb-b"),
-      labelA = $("#rb-label-a"),
-      rowB = $("#rb-row-b"),
-      yes = $("#renamebulk-yes"),
-      no = $("#renamebulk-no");
-    $("#renamebulk-title").textContent = `Rename ${count} skills`;
-    a.value = "";
-    b.value = "";
-    const sync = () => {
-      const isReplace = op.value === "replace";
-      labelA.textContent = isReplace
-        ? "Find"
-        : op.value === "strip-prefix"
-          ? "Prefix to strip"
-          : "Prefix";
-      rowB.hidden = !isReplace;
-    };
-    op.value = "add-prefix";
-    sync();
-    const done = (v) => {
-      op.removeEventListener("change", sync);
-      yes.removeEventListener("click", oy);
-      no.removeEventListener("click", on);
-      dlg.removeEventListener("close", oc);
-      dlg.close();
-      resolve(v);
-    };
-    const oy = () => {
-      if (op.value === "replace")
-        done({ op: "replace", from: a.value, to: b.value });
-      else done({ op: op.value, value: a.value });
-    };
-    const on = () => done(null);
-    // "close" fires as a queued task; see promptDialog for why we gate
-    // on dlg.open (only a genuine Esc/backdrop dismissal has it false).
-    const oc = () => {
-      if (!dlg.open) done(null);
-    };
-    op.addEventListener("change", sync);
-    yes.addEventListener("click", oy);
-    no.addEventListener("click", on);
-    dlg.addEventListener("close", oc);
-    dlg.showModal();
-    a.focus();
-  });
-}
 // Local YYYY-MM-DD for a Date, from local-calendar getters. NOT toISOString(),
 // which is UTC and rolls the date over at a different instant than the user's
 // clock — misclassifying "today" for ~1-2h around local midnight in zones
@@ -191,9 +167,20 @@ function fmtWhen(iso, now = new Date()) {
 }
 function fmtLong(iso) {
   if (!iso) return "";
-  const d = new Date(iso + "T00:00:00");
+  // A commit datetime carries a "T" (YYYY-MM-DDTHH:MM); a bare date does not.
+  // No-offset strings are parsed and rendered in the same (viewer) zone, so the
+  // wall-clock the commit recorded is shown verbatim, no timezone shifting.
+  const hasTime = iso.includes("T");
+  const d = new Date(hasTime ? iso : iso + "T00:00:00");
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
+  const day = d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
+  if (!hasTime) return day;
+  const time = d.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return day + ", " + time; // e.g. "July 15, 17:18"
 }
 // Humanize a kebab value/path. Word casing comes from state.names (built-in
 // acronyms/proper nouns merged with the vault's loom.json `names` map);
@@ -218,19 +205,67 @@ function humanTax(cat) {
     .join(" / ");
 }
 // Taxonomy hue palette, kept clear of the state hues (green 160 / amber 68
-// / red 25). Drives the domain/layer accents via taxHueStyle.
-const TAX_HUES = [212, 235, 260, 285, 305, 328, 348, 192];
+// / red 25). 16 entries so the largest axis vocabulary gets a distinct hue.
+// The stride in taxHueStyle MUST stay coprime with this length: at length 12
+// a stride of 3 collapses the palette to 4 hues. gcd(3, 16) = 1.
+const TAX_HUES = [
+  192, 205, 218, 231, 244, 257, 270, 283, 296, 309, 322, 335, 348, 8, 21, 34,
+];
 function hueHash(s) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h;
 }
 // Taxonomy hue: rank-based over the axis's distinct values (sorted), so up
-// to 8 values per axis get 8 DIFFERENT hues (hashing collides). The stride
-// (3, coprime with 8) spreads alphabetically-adjacent values far apart on
+// to 16 values per axis get 16 DIFFERENT hues (hashing collides). The stride
+// (3, coprime with 16) spreads alphabetically-adjacent values far apart on
 // the wheel. Same value gets the same hue as a section header and as a
 // card chip. Falls back to the hash for unknown/empty values.
+// The three custom properties one hue produces.
+//
+// --tint paints surfaces (tiles, legend dots, map nodes) and keeps a single
+// lightness: a fill at 59% reads on both themes. --tint-ink is the same hue as
+// TEXT, and text has a contrast floor that one lightness cannot clear on both —
+// 59% on the 16% soft fill measured 2.87-3.43 in light and 3.12-3.62 in dark,
+// against a 4.5 requirement, across every chip in the library. Only the
+// lightness mirrors with the theme; the hue, which is what actually carries the
+// taxonomy identity, is the same number in all three properties.
+//
+// The dark ink sits at 76%, not the 85% it started at. 85 measured 7.77-8.74:1
+// against the chip's own fill, where the floor is 4.5 — and it paid for that
+// unused margin in chroma: at 85% the 240-260 band clips in gamut around 0.07,
+// so half of what a pin asked for was dropped by the browser without saying so,
+// which is why the domain column (eight of its sixteen values in that band) read
+// visibly quieter than area and kind. Sweeping all 33 values of the three axes
+// for the lightness that holds 6:1 lands in a 74-77% band — flat enough to
+// collapse to one number. At 76 the full pinned chroma survives (argo, strategy,
+// governance and runbook gain ~1.7x) and the chips still measure 5.99-6.63:1.
+// Light stays at 41%: it has a clipping problem of its own (13 of the 33 values
+// lose chroma there, analytics and operations about half) but that is a separate
+// pass, not this one.
+function tintVars(hue, chroma = 0.135) {
+  // Light steps the ink's chroma down a hair with the fill's, so a deliberately
+  // quiet value (slate technology, taupe weddings) stays quiet as text too.
+  // Dark does not: at 76% the gamut already holds the pinned chroma, and cutting
+  // it again is what made every quiet value collapse toward the same pastel.
+  const ink = Math.round(chroma * 0.96 * 1000) / 1000;
+  return (
+    `--tint:oklch(59% ${chroma} ${hue});` +
+    `--tint-soft:oklch(59% ${chroma} ${hue} / 0.16);` +
+    `--tint-ink:light-dark(oklch(41% ${ink} ${hue}),oklch(76% ${chroma} ${hue}))`
+  );
+}
+// The vault's pinned hue for an axis value, or null when the axis doesn't pin
+// it. Pinned beats rank because rank is unstable: adding one value recolours
+// every chip in the library without any skill having changed.
+function pinnedHue(axisId, value) {
+  const axis = axisList().find((x) => x.id === axisId);
+  const spec = axis && axis.hues && axis.hues[value];
+  return Array.isArray(spec) ? spec : null;
+}
 function taxHueStyle(axis, value) {
+  const pin = pinnedHue(axis, value);
+  if (pin) return tintVars(pin[0], pin[1]);
   const vals = [
     ...new Set((state.skills || []).map((s) => s[axis]).filter(Boolean)),
   ].sort();
@@ -239,22 +274,20 @@ function taxHueStyle(axis, value) {
     i >= 0
       ? TAX_HUES[(i * 3) % TAX_HUES.length]
       : TAX_HUES[hueHash(value || "other") % TAX_HUES.length];
-  return `--tint:oklch(59% 0.135 ${hue});--tint-soft:oklch(59% 0.135 ${hue} / 0.16)`;
+  return tintVars(hue);
 }
 // Single source of truth for library grouping + order. renderLibrary and
 // libraryOrder (detail arrow-nav) BOTH consume this, so they cannot drift.
 function groupKeyOf(s) {
-  if (groupAxis === "layer") return s.layer || "";
-  if (groupAxis === "domain") return s.domain || "";
-  return "";
+  return groupAxis === "none" ? "" : s[groupAxis] || "";
 }
-// The axis you are NOT grouping by (null in "none" mode).
-function orthAxisOf() {
-  return groupAxis === "domain"
-    ? "layer"
-    : groupAxis === "layer"
-      ? "domain"
-      : null;
+// The axes you are NOT grouping by (all of them in "none" mode), narrowed to
+// the ones the set on screen carries: the archive declares three and fills one,
+// and a column of nothing but "–" is width spent on an axis that is not there.
+function orthAxesOf() {
+  return liveAxes()
+    .map((a) => a.id)
+    .filter((id) => id !== groupAxis);
 }
 function groupedSkills(skills) {
   const groups = new Map();
@@ -280,9 +313,10 @@ function groupedSkills(skills) {
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
 }
-// The free-text search haystack for a skill: title, name, description and both
-// taxonomy axes, lowercased. Same fields the rendered data-hay attribute holds,
-// so matchesSearch and filterLibrary's DOM check stay in lockstep.
+// The free-text search haystack for a skill: title, name, description and
+// every declared taxonomy axis, lowercased. Same fields the rendered
+// data-hay attribute holds, so matchesSearch and filterLibrary's DOM check
+// stay in lockstep.
 function skillHay(s) {
   return (
     s.title +
@@ -291,9 +325,9 @@ function skillHay(s) {
     " " +
     (s.description || "") +
     " " +
-    (s.domain || "") +
-    " " +
-    (s.layer || "")
+    axisList()
+      .map((a) => s[a.id] || "")
+      .join(" ")
   ).toLowerCase();
 }
 // The live search query as a pure predicate. libraryOrder() deliberately leaves
@@ -308,8 +342,9 @@ function matchesSearch(s) {
 function passesFilters(s) {
   return (
     (!statusFilter || (s.status || "active") === statusFilter) &&
-    (!domainFilter || s.domain === domainFilter) &&
-    (!layerFilter || s.layer === layerFilter) &&
+    axisList().every(
+      (a) => !axisFilters[a.id] || s[a.id] === axisFilters[a.id],
+    ) &&
     (!linkFilter || linkStateOf(s) === linkFilter) &&
     (!syncFilter || (s.sync || "clean") === syncFilter)
   );
@@ -473,52 +508,53 @@ const NC_NEUTRAL = new Set([
   "neutral",
   "stone",
 ]);
-const NC_L = {
-  100: 92,
-  200: 86,
-  300: 78,
-  400: 70,
-  500: 62,
-  600: 54,
-  700: 46,
-  800: 38,
-  900: 30,
-};
-const NC_C = {
-  100: 0.4,
-  200: 0.6,
-  300: 0.8,
-  400: 0.95,
-  500: 1,
-  600: 1,
-  700: 0.9,
-  800: 0.75,
-  900: 0.6,
-};
 function namedColor(token) {
   if (!token) return null;
+  // The step suffix (-400/-500/-600) is legacy: accepted so existing
+  // frontmatter keeps parsing, ignored so it no longer modulates anything.
+  // The token carries a HUE (and the neutral flag); lightness and chroma
+  // belong to the tile system, or an override renders one weight and an
+  // inherited tile another — the exact mismatch this replaced.
   const m = String(token)
     .trim()
     .toLowerCase()
     .match(/^([a-z]+)(?:-(\d{3}))?$/);
   if (!m) return null;
-  const fam = m[1];
-  const step = m[2] ? +m[2] : 500;
-  const hue = NC_HUE[fam];
-  if (hue === undefined || !(step in NC_L)) return null;
-  const L = NC_L[step];
-  const C = +((NC_NEUTRAL.has(fam) ? 0.014 : 0.15) * NC_C[step]).toFixed(3);
-  return {
-    c: `oklch(${L}% ${C} ${hue})`,
-    soft: `oklch(${L}% ${C} ${hue} / 0.17)`,
-  };
+  const hue = NC_HUE[m[1]];
+  if (hue === undefined) return null;
+  return { hue, neutral: NC_NEUTRAL.has(m[1]) };
 }
+// Icon inner markup: prefer the full generated Lucide catalog (icons.js), then
+// the built-in handwritten map, then the generic glyph. The catalog is absent in
+// unit tests and if icons.js failed to load, so the fallbacks are load-bearing.
+function iconInner(nm) {
+  const cat = globalThis.SKILL_LOOM_ICONS;
+  return (cat && cat[nm]) || ICONS[nm] || ICONS.fallback;
+}
+// An explicit product colour always wins over the taxonomy, including a
+// neutral one. The gate now permits icon-color only for whitelisted products,
+// so neutral-500 is a deliberate black-gray brand mark, not a scaffold default.
+function chosenColor(iconColor) {
+  return namedColor(iconColor);
+}
+
 function skillTile(s) {
   const nm = (s.icon || "").trim();
-  const col = namedColor(s.iconColor);
-  const style = col ? ` style="--tint:${col.c};--tint-soft:${col.soft}"` : "";
+  const col = chosenColor(s.iconColor);
+  // No chosen icon-color: the tile inherits the hue of the axis loom.json
+  // marks with `tile: true` (the area) — identical to that axis's chip by
+  // construction. icon-color survives purely as the product override
+  // (LinkedIn blue, npm red): the one case where the tile knows better than
+  // the taxonomy.
+  let style = "";
+  if (col) style = ` style="${tintVars(col.hue, col.neutral ? 0 : 0.135)}"`;
+  else {
+    const axis = axisList().find((x) => x.tile);
+    const pin = axis && pinnedHue(axis.id, s[axis.id]);
+    if (pin) style = ` style="${tintVars(pin[0], pin[1])}"`;
+  }
   if (nm) {
-    const inner = ICONS[nm] || ICONS.fallback;
+    const inner = iconInner(nm);
     return `<span class="tile"${style}><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg></span>`;
   }
   const mono = ((s.name || "?").match(/[a-z0-9]/i) || ["?"])[0];
@@ -527,12 +563,23 @@ function skillTile(s) {
 // Small colored glyph for dense lists (rail sibling list) — no tile box.
 function railIcon(s) {
   const nm = (s.icon || "").trim();
-  const inner = nm ? ICONS[nm] || ICONS.fallback : ICONS.fallback;
-  const col = namedColor(s.iconColor);
-  // Colour only follows an explicit icon-color; otherwise the glyph uses
-  // the neutral default (the vault is flat — no category tint).
-  const style = col ? `color:${col.c}` : "";
-  return `<span class="fic" style="${style}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg></span>`;
+  const col = chosenColor(s.iconColor);
+  // Same colour story as the library tile: chosen icon-color wins, otherwise
+  // the area tint. The rail used to stay neutral by design ("the vault is
+  // flat") while the grid tinted by area — the same skill read colored in one
+  // view and gray in the other, which is worse than either choice alone.
+  let hue = col && [col.hue, col.neutral ? 0 : 0.135];
+  if (!hue) {
+    const axis = axisList().find((x) => x.tile);
+    hue = axis && pinnedHue(axis.id, s[axis.id]);
+  }
+  const style = hue ? `${tintVars(hue[0], hue[1])};color:var(--tint)` : "";
+  // No frontmatter icon falls back to the initial, the same way the library
+  // tile does. Read-only sources carry no icon: at all, so the generic glyph
+  // made every row in the rail identical and told the reader nothing.
+  if (!nm)
+    return `<span class="fic mono" style="${style}">${mono(s.name)}</span>`;
+  return `<span class="fic" style="${style}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${iconInner(nm)}</svg></span>`;
 }
 function fmtSize(n) {
   return n < 1024 ? n + " B" : (n / 1024).toFixed(1) + " KB";
@@ -545,6 +592,18 @@ const FILEICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>',
   text: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9z"/><path d="M13 3v6h6"/><path d="M9 13h6M9 17h4"/></svg>',
 };
+// The gallery's own glyph, in the rail's stroke weight. Not from FILEICONS:
+// that table answers "what kind of file is this", and the gallery is not one.
+const GALLERY_IC =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="16" height="16" rx="2"/><circle cx="12" cy="8" r="1.6"/><path d="M22 13l-1.3-1.3a2.4 2.4 0 0 0-3.4 0L11 18"/><path d="M18 22H4a2 2 0 0 1-2-2V6"/></svg>';
+// The file's own export sits next to the file's own name: it takes what the
+// viewer is showing, while the header's Export takes the whole skill as a zip.
+// Icon-only because the bar is a caption for the document, not a toolbar — the
+// name rides on title and aria-label. Hidden until a file is actually open.
+const FILE_EXPORT_BTN =
+  `<button class="icon" id="v-export" title="Export this file" aria-label="Export this file" hidden>` +
+  `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">` +
+  `<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg></button>`;
 function fileIcon(path) {
   const ext = (path.split(".").pop() || "").toLowerCase();
   const t =
@@ -582,7 +641,7 @@ const WARNI =
   '<svg viewBox="0 0 12 12" fill="none"><path d="M6 3v3.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="6" cy="9" r=".9" fill="currentColor"/></svg>';
 function healthBadge(health, extra) {
   if (health === "active")
-    return `<span class="badge ok">${CHECK}${esc(extra || "Active everywhere")}</span>`;
+    return `<span class="badge ok">${CHECK}${esc(extra || "All linked")}</span>`;
   if (health === "attention")
     return `<span class="badge warn" title="Runtime links need attention">${WARNI}${esc(extra || "Attention")}</span>`;
   return `<span class="badge off" title="Not linked into any runtime yet">${esc(extra || "Not active")}</span>`;
@@ -605,8 +664,8 @@ function updateNav() {
   $("#nav-config").classList.toggle("on", curView === "config");
 }
 function go(view, arg) {
-  // Rendered/Source persists while navigating between skills in the
-  // detail view; it resets to Rendered when you re-enter from a list.
+  // Each Markdown file chooses its own default when opened. Entering detail
+  // starts neutral; showFile applies the file-specific default after loading.
   if (view === "detail" && curView !== "detail") viewMode = "rendered";
   if (view === "config" && curView !== "config") configPane = "rules";
   curView = view;
@@ -643,24 +702,44 @@ function navStop() {
 function navCurrent(seq) {
   return seq == null || seq === navSeq;
 }
+// The archive paints through renderLibrary, so as far as the fade is concerned
+// it is the same surface as the library: moving between them changes the set on
+// screen, not the view, and fading the whole thing reads as a flash.
+function fadeSurface(v) {
+  return v === "archived" ? "skills" : v;
+}
 function render(arg) {
   const seq = ++navSeq;
   updateNav();
+  // Freeze the outgoing view before touching the fade class. Dropping
+  // "norefade" re-arms loomfade on the children still on screen, and an async
+  // view (detail, status, config) leaves them there long enough to blink to
+  // zero and fade back in before the new content lands. The incoming children
+  // carry no inline style, so they still follow the rule below.
+  for (const k of app().children) k.style.animation = "none";
   // Skip the view fade on a same-view refresh (data reload): only the
   // content changes, the background stays put (no flash).
-  app().classList.toggle("norefade", curView === lastView);
+  app().classList.toggle(
+    "norefade",
+    fadeSurface(curView) === fadeSurface(lastView),
+  );
   lastView = curView;
   const isAsync =
     curView === "detail" || curView === "status" || curView === "config";
   if (isAsync) navStart();
   else navStop();
   if (curView === "skills")
-    // An empty vault keeps the first-run hero on the My skills tab too,
-    // not a bare empty table. Archived mode still renders its own list.
-    (state.skills || []).length === 0 && !libArchived
-      ? renderEmpty()
-      : renderLibrary();
-  else if (curView === "detail") renderDetail(arg || current, seq);
+    // A non-vault source is browsed read-only; the vault keeps its first-run
+    // hero on an empty library, and archived mode renders its own list.
+    curSource !== "personal"
+      ? renderSourceLibrary(seq)
+      : (state.skills || []).length === 0 && !libArchived
+        ? renderEmpty()
+        : renderLibrary();
+  else if (curView === "detail")
+    curSource !== "personal"
+      ? renderSourceDetail(arg || current, seq)
+      : renderDetail(arg || current, seq);
   else if (curView === "status") renderStatus(seq);
   else if (curView === "new") renderNew();
   else if (curView === "config") renderConfig(seq);
@@ -671,15 +750,131 @@ function render(arg) {
 /* ---------- library ---------- */
 let searchQ = "";
 let syncBannerDismissed = false;
-let groupAxis = "none"; // "none" | "domain" | "layer"
+// How the library is grouped is a standing preference, not a per-visit choice:
+// a vault is read the same way every time it is opened, and re-picking the axis
+// on every load was the first thing done in every session. Stored per source,
+// because the axes a source declares are its own.
+const GROUP_KEY = "skill-loom:group";
+let groupAxis = "none"; // "none" | a declared axis id
+function groupStoreKey() {
+  return `${GROUP_KEY}:${curSource || "personal"}`;
+}
+function loadGroupAxis() {
+  try {
+    groupAxis = localStorage.getItem(groupStoreKey()) || "none";
+  } catch {
+    // private mode / storage disabled: this session keeps its own choice
+    groupAxis = "none";
+  }
+}
+function setGroupAxis(axis) {
+  groupAxis = axis;
+  try {
+    localStorage.setItem(groupStoreKey(), axis);
+  } catch {
+    // nothing to persist to; the choice still holds for this page
+  }
+}
 let sortMode = "name"; // "name" | "axis" (orthogonal taxonomy axis) | "updated"
 let sortDir = 1; // 1 asc, -1 desc (toggled by ledger column headers)
-let libView = "list"; // "grid" | "list"
+// Which of the three modes the library opens in is a standing preference, the
+// same as the grouping: whoever reads the vault as a map reads it as a map
+// every morning. Stored per source alongside the axis.
+const VIEW_KEY = "skill-loom:view";
+const LIB_VIEWS = ["grid", "list", "map"];
+let libView = "list"; // "grid" | "list" | "map"
+function viewStoreKey() {
+  return `${VIEW_KEY}:${curSource || "personal"}`;
+}
+function loadLibView() {
+  let v = null;
+  try {
+    v = localStorage.getItem(viewStoreKey());
+  } catch {
+    // private mode / storage disabled: this session keeps its own choice
+  }
+  applyLibView(LIB_VIEWS.includes(v) ? v : "list");
+}
+// Leaving the map closes whatever the inspector had drilled into. A selection
+// is a place on the canvas and survives the round trip; a panel opened from a
+// findings row is a step away from the summary, and coming back to the map
+// mid-list is not where the map starts.
+function applyLibView(v) {
+  libView = v;
+  if (v !== "map") mapPanel = null;
+}
+// The persisting form is for a mode the user picked. The archive's fallback off
+// the map is about the set on screen, so it uses applyLibView and leaves the
+// preference alone — the way back out restores it.
+function setLibView(v) {
+  applyLibView(v);
+  try {
+    localStorage.setItem(viewStoreKey(), v);
+  } catch {
+    // nothing to persist to; the choice still holds for this page
+  }
+}
 let libArchived = false; // library shows the archive instead of active skills
+// The statuses the set on screen actually holds, in lifecycle order — the same
+// list the rail renders, so the keyboard walks exactly what the eye can click.
+function presentStatuses() {
+  const seen = new Set(libSkills().map((s) => s.status || "active"));
+  return STATUS_ORDER.filter((v) => seen.has(v)).concat(
+    [...seen].filter((v) => !STATUS_ORDER.includes(v)),
+  );
+}
+// The status facet from the keyboard: no filter, then each status in turn,
+// then no filter again. "All" is a stop on the ring rather than something you
+// escape by pressing the same value twice, so one key both narrows and clears.
+function cycleStatusFilter() {
+  const ring = [null, ...presentStatuses()];
+  if (ring.length < 2) return;
+  // A filter on a status the set no longer holds lands at -1, which steps to
+  // "all" instead of getting stuck past the end.
+  const next = ring[(ring.indexOf(statusFilter) + 1) % ring.length] ?? null;
+  setStatusFilter(next);
+  if (mapPanel) repaintLibrary();
+  else {
+    const rail = $("#librail");
+    if (rail) rail.innerHTML = renderRailHtml();
+    if (libView === "map") paintMap();
+    else filterLibrary();
+  }
+  toast(next ? `Status: ${statusLabel(next)}` : "Status: all");
+}
 // The set the library renders: active vault skills, or archived ones as
 // cards (same UI). All library machinery reads through this.
 function libSkills() {
   return libArchived ? archivedCards() : state.skills || [];
+}
+// Entering or leaving the archive swaps the set every rail control describes,
+// so the controls that cannot survive the swap go with it: a filter naming a
+// value the other set does not carry would empty the view from a control that
+// no longer lists it, and the archive has no graph to map. The map mode is
+// remembered rather than discarded — leaving the archive puts you back on the
+// view you came from.
+let viewBeforeArchive = null;
+function setLibArchived(next) {
+  if (libArchived === next) return;
+  libArchived = next;
+  clearRailFilters(false);
+  mapSel = null;
+  mapLens = null;
+  if (next) {
+    // Only the map is stepped off, and only then is anything remembered: a
+    // mode picked inside the archive is a choice, and it survives the way out.
+    viewBeforeArchive = libView === "map" ? "list" : null;
+    if (libView === "map") applyLibView("list");
+  } else {
+    if (viewBeforeArchive && libView === viewBeforeArchive) applyLibView("map");
+    viewBeforeArchive = null;
+  }
+  // The archive carries one axis of the three and its own statuses, so both
+  // fall back while you are in there. Re-read the stored preferences on the
+  // way out: the fallback is for the set on screen, not a change of mind.
+  loadGroupAxis();
+  normalizeGroupAxis();
+  if (!next) loadStatusFilter();
 }
 // The 'a' shortcut toggles the library between active and archived. Return
 // the next libArchived AND the view that matches it, so the handler can
@@ -690,11 +885,89 @@ function archiveToggleTarget(archived) {
   const next = !archived;
   return { libArchived: next, view: next ? "archived" : "skills" };
 }
+// The vault's declared axes, straight from the server. Everything taxonomy-
+// shaped in the UI reads these instead of naming an axis.
+function axisList() {
+  return (state && state.axes) || [];
+}
+function axisLabel(id) {
+  const a = axisList().find((x) => x.id === id);
+  return (a && a.label) || humanTax(id);
+}
+// axis id -> selected value. Replaces domainFilter / layerFilter.
+let axisFilters = {};
 let statusFilter = null; // null = all, else a status value
-let domainFilter = null; // null = all, else a domain value
-let layerFilter = null; // null = all, else a layer value
 let linkFilter = null; // null = all, else a link state
 let syncFilter = null; // null = all, else a sync state (internal value)
+// The rail's filters as a predicate over a skill. filterLibrary() applies the
+// same rules to the DOM, which is all a table or a grid needs; the map has no
+// rows to hide, so it has to filter the set it draws from. Both read this, so
+// a rail selection cannot mean one thing in the ledger and another on the map.
+function passesFilters(s) {
+  if (statusFilter && (s.status || "active") !== statusFilter) return false;
+  if (linkFilter && linkStateOf(s) !== linkFilter) return false;
+  if (syncFilter && (s.sync || "clean") !== syncFilter) return false;
+  return axisList().every(
+    (a) => !axisFilters[a.id] || (s[a.id] || "") === axisFilters[a.id],
+  );
+}
+function filteredSkills() {
+  return libSkills().filter(passesFilters);
+}
+function anyFilterOn() {
+  return !!(
+    statusFilter ||
+    linkFilter ||
+    syncFilter ||
+    axisList().some((a) => axisFilters[a.id])
+  );
+}
+// Switching between the active library and the archive switches the set the
+// rail describes: a domain the archive does not carry, or a status only live
+// skills take, would silently empty the view with a control that no longer
+// lists the value it is filtering on.
+function clearRailFilters(persist = true) {
+  axisFilters = {};
+  setStatusFilter(null, persist);
+  linkFilter = null;
+  syncFilter = null;
+}
+// Which lifecycle status the library is filtered to is a standing preference,
+// like the grouping axis and the mode: someone who works out of the drafts
+// opens on the drafts. Stored per source alongside the other two.
+const STATUS_KEY = "skill-loom:status";
+function statusStoreKey() {
+  return `${STATUS_KEY}:${curSource || "personal"}`;
+}
+function loadStatusFilter() {
+  try {
+    statusFilter = localStorage.getItem(statusStoreKey()) || null;
+  } catch {
+    // private mode / storage disabled: this session keeps its own choice
+    statusFilter = null;
+  }
+}
+// persist=false is for the fallbacks that are about the set on screen rather
+// than a change of mind — crossing into the archive, whose statuses are its
+// own. The preference survives the trip and the way back restores it.
+function setStatusFilter(v, persist = true) {
+  statusFilter = v;
+  if (!persist || libArchived) return;
+  try {
+    if (v) localStorage.setItem(statusStoreKey(), v);
+    else localStorage.removeItem(statusStoreKey());
+  } catch {
+    // nothing to persist to; the choice still holds for this page
+  }
+}
+// A stored status the current set does not hold would filter the library down
+// to nothing from a facet the rail no longer lists. Fall back to no filter for
+// this render, without touching what is stored: the status may well be back
+// after the next edit.
+function normalizeStatusFilter() {
+  if (statusFilter && !presentStatuses().includes(statusFilter))
+    statusFilter = null;
+}
 // keyboard selection over the (grid) card list: arrows move, Enter opens
 let libSelName = null;
 function libHighlight(name) {
@@ -770,12 +1043,17 @@ function libSelectAllVisible() {
 function libNav(key, shift) {
   const els = libVisibleEls();
   if (!els.length) return;
+  // A list is one column: only Up/Down move in it. Left/Right belong to the
+  // grid, where they mean something spatially. Checked before the no-cursor
+  // case, or a sideways key would drop a cursor on the first row.
+  if (libView === "list" && (key === "ArrowLeft" || key === "ArrowRight"))
+    return;
   const idx = els.findIndex((c) => c.dataset.skill === libSelName);
   let ni;
   if (idx < 0) {
     ni = 0;
   } else if (libView === "list") {
-    const step = key === "ArrowUp" || key === "ArrowLeft" ? -1 : 1;
+    const step = key === "ArrowUp" ? -1 : 1;
     ni = Math.min(els.length - 1, Math.max(0, idx + step));
   } else if (key === "ArrowLeft") {
     ni = Math.max(0, idx - 1);
@@ -828,7 +1106,7 @@ function statusLabel(s) {
 // showActive to state every row.
 const LIFECYCLE_CLS = {
   idea: "off",
-  draft: "acc",
+  draft: "draft",
   active: "ok",
   suspended: "warn",
   deprecated: "bad",
@@ -840,36 +1118,49 @@ function statusBadge(status, showActive) {
   const cls = LIFECYCLE_CLS[st] || "off";
   return `<span class="badge ${cls}">${esc(statusLabel(st).toLowerCase())}</span>`;
 }
-// Colored via taxHueStyle (rank-based per axis), so each domain/layer value
-// reads with its own hue at a glance and matches its section accent.
+// Colored via taxHueStyle (rank-based per axis), so each axis value reads
+// with its own hue at a glance and matches its section accent.
 function taxChip(axis, v) {
-  return `<span class="taxchip" style="${taxHueStyle(axis, v)}"><span class="tcdot"></span>${esc(humanTax(v))}</span>`;
+  // The label rides in its own span so a narrow column can ellipsize it, and
+  // the title carries the full value for the ones that do get clipped.
+  const label = humanTax(v);
+  return `<span class="taxchip" style="${taxHueStyle(axis, v)}" title="${esc(label)}"><span class="tcdot"></span><span class="tclabel">${esc(label)}</span></span>`;
 }
-// Orthogonal axis chip(s): the axis you are NOT grouping by. "none" shows both.
+// Orthogonal axis chip(s): the axes you are NOT grouping by. "none" shows all.
 function orthChips(s) {
-  const out = [];
-  if ((groupAxis === "domain" || groupAxis === "none") && s.layer)
-    out.push(taxChip("layer", s.layer));
-  if ((groupAxis === "layer" || groupAxis === "none") && s.domain)
-    out.push(taxChip("domain", s.domain));
-  return out.join("");
+  return orthAxesOf()
+    .filter((id) => s[id])
+    .map((id) => taxChip(id, s[id]))
+    .join("");
+}
+// Per-axis data attributes, so filterLibrary's DOM check can match on any
+// declared axis without naming one. Shared by the grid card and the ledger
+// row — both are [data-skill] elements filterLibrary walks identically.
+function axisDataAttrs(s) {
+  return axisList()
+    .map((a) => `data-${a.id}="${esc(s[a.id] || "")}"`)
+    .join(" ");
 }
 function libCard(s) {
   const hay = skillHay(s);
   const chips = orthChips(s);
   const badges = statusBadge(s.status);
+  // Grouped, each section has its own h2 and the card title sits under it.
+  // Ungrouped there is no section, so an h3 would skip a level below the page's
+  // h1 and the document outline would read as a gap.
+  const h = groupAxis === "none" ? "h2" : "h3";
   const foot =
     chips || badges
       ? `<div class="foot"><span class="foot-l">${chips}</span><span class="foot-r">${badges}</span></div>`
       : "";
-  return `<a class="card${libSel.has(s.name) ? " sel" : ""}" data-skill="${esc(s.name)}" data-hay="${esc(hay)}" data-domain="${esc(s.domain || "")}" data-layer="${esc(s.layer || "")}" data-status="${esc(s.status || "active")}" data-link="${esc(linkStateOf(s))}" data-sync="${esc(s.sync || "clean")}"><span class="selbox" aria-hidden="true"></span><div class="top">${skillTile(s)}<div class="headwrap"><h3>${esc(s.title)}</h3></div><span class="when">${esc(fmtWhen(s.modified))}</span></div><p>${esc(s.description || "No description yet.")}</p>${foot}</a>`;
+  return `<a class="card${libSel.has(s.name) ? " sel" : ""}" data-skill="${esc(s.name)}" data-hay="${esc(hay)}" ${axisDataAttrs(s)} data-status="${esc(s.status || "active")}" ${libArchived ? "" : `data-link="${esc(linkStateOf(s))}" data-sync="${esc(s.sync || "clean")}"`}><span class="selbox" aria-hidden="true"></span><div class="top">${skillTile(s)}<div class="headwrap"><${h}>${esc(s.title)}</${h}></div><span class="when">${esc(fmtWhen(s.modified))}</span></div><p>${esc(s.description || "No description yet.")}</p>${foot}</a>`;
 }
-// Command rail: Group switch + Domain / Layer / Status lists with counts.
+// Command rail: Group switch + one section per declared axis, plus Status.
 // Counts are a snapshot of the whole vault, not of the current filter.
 const STATUS_ORDER = ["idea", "draft", "active", "suspended", "deprecated"];
 const STATUS_DOT = {
   idea: "var(--faint)",
-  draft: "var(--accent)",
+  draft: "var(--draft)",
   active: "var(--ok)",
   suspended: "var(--warn)",
   deprecated: "var(--err)",
@@ -882,6 +1173,19 @@ function axisValues(axis) {
         .filter(Boolean),
     ),
   ].sort();
+}
+// The declared axes that the set on screen actually carries. The vault
+// declares three; the archive fills one, so grouping or filtering the archive
+// by the other two offers a control with no value behind it.
+function liveAxes() {
+  return axisList().filter((a) => axisValues(a.id).length);
+}
+// Grouping by an axis the current set does not carry puts every skill in one
+// nameless bucket. Fall back to no grouping instead, and keep the fallback
+// where the rail can see it: the segmented control reads groupAxis.
+function normalizeGroupAxis() {
+  if (groupAxis !== "none" && !liveAxes().some((a) => a.id === groupAxis))
+    groupAxis = "none";
 }
 function renderRailHtml() {
   const counts = (axis) => {
@@ -896,8 +1200,6 @@ function renderRailHtml() {
     `<button data-axis="${a}"${groupAxis === a ? ' class="on"' : ""} type="button">${lbl}</button>`;
   const item = (kind, v, label, count, on, style) =>
     `<button class="ritem${on ? " on" : ""}" data-kind="${kind}" data-v="${esc(v)}" style="${style}" type="button"><span class="d"></span>${esc(label)}<span class="n">${count}</span></button>`;
-  const dc = counts("domain");
-  const lc = counts("layer");
   const sc = counts("status");
   const kc = {};
   const yc = {};
@@ -910,80 +1212,895 @@ function renderRailHtml() {
   const statuses = STATUS_ORDER.filter((s) => sc[s]).concat(
     Object.keys(sc).filter((s) => !STATUS_ORDER.includes(s)),
   );
+  // A heading with nothing under it is not a quiet section, it is a label for
+  // an empty set: the archive declares three axes and carries values for one,
+  // and the other two used to print a title over nothing.
+  const section = (label, rows) =>
+    rows ? `<div class="rl">${esc(label)}</div>${rows}` : "";
+  const axisSections = liveAxes()
+    .map((a) => {
+      const c = counts(a.id);
+      return section(
+        axisLabel(a.id),
+        axisValues(a.id)
+          .map((v) =>
+            item(
+              a.id,
+              v,
+              humanTax(v),
+              c[v],
+              axisFilters[a.id] === v,
+              taxHueStyle(a.id, v),
+            ),
+          )
+          .join(""),
+      );
+    })
+    .join("");
+  // Links and sync describe where a skill is served and whether the vault has
+  // it committed. An archived skill is served nowhere, and the archive rows
+  // carried a fabricated "partial / synced" for both.
+  const stateSections = libArchived
+    ? ""
+    : section(
+        "Links",
+        LINK_ORDER.filter((v) => kc[v])
+          .map((v) =>
+            item(
+              "link",
+              v,
+              cap(v),
+              kc[v],
+              linkFilter === v,
+              `--tint:${LINK_DOT[v]}`,
+            ),
+          )
+          .join(""),
+      ) +
+      section(
+        "Sync",
+        SYNC_ORDER.filter((v) => yc[v])
+          .map((v) =>
+            item(
+              "sync",
+              v,
+              cap(SYNC_LABEL[v]),
+              yc[v],
+              syncFilter === v,
+              `--tint:${SYNC_DOT[v]}`,
+            ),
+          )
+          .join(""),
+      );
+  const groupBy = liveAxes().length
+    ? `<div class="rl">Group by</div><div class="seg" id="groupby">${seg("none", "None")}${liveAxes()
+        .map((a) => seg(a.id, axisLabel(a.id)))
+        .join("")}</div>`
+    : "";
   return (
-    `<div class="rl">Group by</div><div class="seg" id="groupby">${seg("none", "None")}${seg("domain", "Domain")}${seg("layer", "Layer")}</div>` +
-    `<div class="rl">Domain</div>` +
-    axisValues("domain")
-      .map((v) =>
-        item(
-          "domain",
-          v,
-          humanTax(v),
-          dc[v],
-          domainFilter === v,
-          taxHueStyle("domain", v),
-        ),
-      )
-      .join("") +
-    `<div class="rl">Layer</div>` +
-    axisValues("layer")
-      .map((v) =>
-        item(
-          "layer",
-          v,
-          humanTax(v),
-          lc[v],
-          layerFilter === v,
-          taxHueStyle("layer", v),
-        ),
-      )
-      .join("") +
-    `<div class="rl">Status</div>` +
-    statuses
-      .map((v) =>
-        item(
-          "status",
-          v,
-          statusLabel(v),
-          sc[v],
-          statusFilter === v,
-          `--tint:${STATUS_DOT[v] || "var(--dim)"}`,
-        ),
-      )
-      .join("") +
-    `<div class="rl">Links</div>` +
-    LINK_ORDER.filter((v) => kc[v])
-      .map((v) =>
-        item(
-          "link",
-          v,
-          cap(v),
-          kc[v],
-          linkFilter === v,
-          `--tint:${LINK_DOT[v]}`,
-        ),
-      )
-      .join("") +
-    `<div class="rl">Sync</div>` +
-    SYNC_ORDER.filter((v) => yc[v])
-      .map((v) =>
-        item(
-          "sync",
-          v,
-          cap(SYNC_LABEL[v]),
-          yc[v],
-          syncFilter === v,
-          `--tint:${SYNC_DOT[v]}`,
-        ),
-      )
-      .join("")
+    groupBy +
+    mapRailHtml() +
+    axisSections +
+    section(
+      "Status",
+      statuses
+        .map((v) =>
+          item(
+            "status",
+            v,
+            statusLabel(v),
+            sc[v],
+            statusFilter === v,
+            `--tint:${STATUS_DOT[v] || "var(--dim)"}`,
+          ),
+        )
+        .join(""),
+    ) +
+    stateSections
   );
 }
+/* ---------- map view ---------- */
+// The knowledge graph is concept-level: thousands of nodes, which on screen is
+// a hair ball and tells you nothing you can act on. The map draws the unit the
+// library already governs — one circle per skill, inside its group — and keeps
+// the concepts for the inspector.
+const MAP_CELL = 74;
+const MAP_ROWH = 84;
+const MAP_PADX = 14;
+const MAP_HEAD = 26;
+const MAP_GAP = 16;
+
+let graphData = null;
+let graphState = "idle"; // idle | loading | error
+let mapSel = null; // {t:"s",k} | {t:"e",a,b} | {t:"m",a,b}
+let mapLens = null; // unlinked | coupled | dupes | code
+let mapMentions = false;
+// The inspector shows one thing at a time: the summary, what you picked on the
+// canvas, or a finding's own list opened from the row that counts it.
+let mapPanel = null; // null | "weak" — the map, or a finding's own list in place of it
+
+// A family is the name prefix before the first dash, the same rule the
+// extraction pipeline uses to decide what it can see at once.
+function famOf(name) {
+  const cut = name.indexOf("-");
+  return cut === -1 ? name : name.slice(0, cut);
+}
+
+// Inside a group every name repeats the same prefix, so the label carries
+// nothing until it goes. Put it back wherever stripping would make two skills
+// read the same: five skills labelled "brand-system" is worse than long names.
+function mapLabels(names) {
+  // Strip the skill's own taxonomy value, not the family: the family is the
+  // name prefix, so stripping it turns artifact-versioning into "versioning"
+  // and loses the subject. The first declared axis is the one the vault names
+  // its skills after (bottega19-ads-review), and where it does not prefix the
+  // name nothing is removed.
+  const axis = (axisList()[0] || {}).id;
+  const valueOf = (n) => {
+    const sk = (state.skills || []).find((s) => s.name === n);
+    return (axis && sk && sk[axis]) || "";
+  };
+  const strip = (n) => {
+    const v = valueOf(n);
+    return v && n.startsWith(v + "-") && n.length > v.length + 1
+      ? n.slice(v.length + 1)
+      : n;
+  };
+  const seen = {};
+  for (const n of names) {
+    const s = strip(n);
+    seen[s] = (seen[s] || 0) + 1;
+  }
+  const out = {};
+  for (const n of names) {
+    const s = strip(n);
+    const label = seen[s] > 1 ? n : s;
+    out[n] = label.length > 14 ? label.slice(0, 13) + "…" : label;
+  }
+  return out;
+}
+
+// One field's box and the grid of skills inside it. The grid is centred in the
+// box, and so is a row that does not fill it: a group of one would otherwise
+// sit in the top-left corner of a field sized for three, which reads as broken
+// rather than as small.
+function mapField(g, x, y, w, cols) {
+  const n = g.items.length;
+  const rows = Math.ceil(n / cols);
+  const h = rows * MAP_ROWH + MAP_HEAD + 14;
+  const grid = x + (w - cols * MAP_CELL) / 2;
+  const pos = {};
+  g.items.forEach((s, i) => {
+    const row = Math.floor(i / cols);
+    const inRow = Math.min(cols, n - row * cols);
+    const indent = ((cols - inRow) * MAP_CELL) / 2;
+    pos[s.name] = {
+      x: grid + indent + (i % cols) * MAP_CELL + MAP_CELL / 2,
+      y: y + MAP_HEAD + 8 + row * MAP_ROWH + 26,
+    };
+  });
+  return { key: g.key, label: g.label, items: g.items, x, y, w, h, pos };
+}
+
+// Grouping off: one field, and it takes the width it is given instead of
+// staying a narrow column with dead space beside it.
+function mapSingleField(g, width) {
+  const fits = Math.max(
+    2,
+    Math.floor((width - 2 * MAP_GAP - 2 * MAP_PADX) / MAP_CELL),
+  );
+  const cols = Math.max(2, Math.min(fits, g.items.length));
+  const box = mapField(
+    g,
+    MAP_GAP,
+    MAP_GAP,
+    cols * MAP_CELL + MAP_PADX * 2,
+    cols,
+  );
+  return { boxes: [box], height: box.y + box.h + MAP_GAP };
+}
+
+// Deterministic layout: each group is a field, skills sit on a grid inside it,
+// and the fields stack in columns of one width — each new field dropped into
+// the column that is currently shortest.
+//
+// Fields used to flow across the canvas and wrap, which made every row as tall
+// as its tallest field: a 3-skill field beside a 9-skill one carried a whole
+// field of nothing under it, and on the real vault 42% of the canvas was empty
+// while the map still needed 1388px of scroll. Columns close that gap without
+// giving up the property that matters — no force simulation, so the same vault
+// draws the same map twice and a node can be pointed at in a conversation.
+function mapLayout(groups, width) {
+  if (groups.length === 1) return mapSingleField(groups[0], width);
+  // Column count comes from a three-skill field; the width left over is then
+  // shared out, so the columns always span the canvas exactly.
+  const ideal = 3 * MAP_CELL + MAP_PADX * 2;
+  const ncols = Math.max(1, Math.floor((width - MAP_GAP) / (ideal + MAP_GAP)));
+  const colW = Math.floor((width - MAP_GAP * (ncols + 1)) / ncols);
+  const cols = Math.max(1, Math.floor((colW - MAP_PADX * 2) / MAP_CELL));
+  // Biggest first: the columns only close level if the tall fields are placed
+  // while there is still room to balance them. This is the map's own order, not
+  // the library's — a group is looked up in the rail, which lists every value
+  // alphabetically with its count.
+  const ordered = [...groups].sort(
+    (a, b) => b.items.length - a.items.length || a.label.localeCompare(b.label),
+  );
+  const colY = new Array(ncols).fill(MAP_GAP);
+  const boxes = [];
+  for (const g of ordered) {
+    let c = 0;
+    for (let i = 1; i < ncols; i++) if (colY[i] < colY[c]) c = i;
+    const box = mapField(
+      g,
+      MAP_GAP + c * (colW + MAP_GAP),
+      colY[c],
+      colW,
+      cols,
+    );
+    boxes.push(box);
+    colY[c] = box.y + box.h + MAP_GAP;
+  }
+  return { boxes, height: Math.max(...colY) };
+}
+
+// Size carries how much was extracted from a skill, so a thin skill looks thin.
+function mapRadius(name) {
+  const g = (graphData && graphData.skills[name]) || null;
+  return 5.5 + Math.sqrt((g && g.concept) || 1) * 1.15;
+}
+
+// The names the map is currently drawing. Every map read goes through it, so
+// a rail filter narrows the plot, its edges, the lens counts and the inspector
+// to the same set instead of narrowing the plot alone.
+// Memoised on everything the set depends on: one paint asks for it from the
+// edges, the mentions, the inspector and the proposals, and each rebuild walks
+// every skill through linkStateOf(), which scans the runtime matrix.
+// lastStateAt is the stamp loadState() writes, so a re-read invalidates it.
+let mapNamesCache = { key: null, set: null };
+function mapNames() {
+  const key = JSON.stringify([
+    lastStateAt,
+    libArchived,
+    statusFilter,
+    linkFilter,
+    syncFilter,
+    axisFilters,
+  ]);
+  if (mapNamesCache.key !== key)
+    mapNamesCache = { key, set: new Set(filteredSkills().map((s) => s.name)) };
+  return mapNamesCache.set;
+}
+function mapEdges() {
+  const vis = mapNames();
+  return ((graphData && graphData.edges) || []).filter(
+    (e) => vis.has(e.a) && vis.has(e.b),
+  );
+}
+function mapMentionEdges() {
+  const vis = mapNames();
+  return ((graphData && graphData.mentions) || []).filter(
+    (m) => vis.has(m.a) && vis.has(m.b),
+  );
+}
+
+// Skills a lens or the search box puts in focus. null = no dimming.
+function mapFocus(names) {
+  const q = searchQ.trim().toLowerCase();
+  if (q) return new Set(names.filter((n) => n.toLowerCase().includes(q)));
+  if (!mapLens) return null;
+  if (mapLens === "coupled")
+    return new Set(mapEdges().flatMap((e) => [e.a, e.b]));
+  if (mapLens === "unlinked") {
+    const linked = new Set(mapEdges().flatMap((e) => [e.a, e.b]));
+    return new Set(names.filter((n) => !linked.has(n)));
+  }
+  if (mapLens === "dupes")
+    return new Set(
+      names.filter((n) => (graphData.skills[n]?.dupes || []).length),
+    );
+  if (mapLens === "code")
+    return new Set(names.filter((n) => graphData.skills[n]?.code));
+  return null;
+}
+
+function mapCurve(a, b, k) {
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const off = Math.min(46, len * k);
+  return `M${a.x} ${a.y} Q${mx - (dy / len) * off} ${my + (dx / len) * off} ${b.x} ${b.y}`;
+}
+
+function mapSvgHtml(width) {
+  const groups = groupedSkills(filteredSkills());
+  const { boxes, height } = mapLayout(groups, width);
+  const pos = {};
+  for (const b of boxes) Object.assign(pos, b.pos);
+  const names = Object.keys(pos);
+  const labels = mapLabels(names);
+  const focus = mapFocus(names);
+  const touches = (e) =>
+    mapSel &&
+    ((mapSel.t === "s" && (mapSel.k === e.a || mapSel.k === e.b)) ||
+      (mapSel.t !== "s" && mapSel.a === e.a && mapSel.b === e.b));
+
+  const fields = boxes
+    .map(
+      (b) =>
+        `<g class="mgrp" style="${taxHueStyle(groupAxis, b.key)}"><rect class="mfield" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="12"/>` +
+        (groupAxis === "none"
+          ? ""
+          : `<circle cx="${b.x + 14}" cy="${b.y + 17}" r="3.5" fill="var(--tint)"/><text class="mgt" x="${b.x + 24}" y="${b.y + 21}">${esc(b.label)}</text><text class="mgn" x="${b.x + b.w - 12}" y="${b.y + 21}" text-anchor="end">${b.items.length}</text>`) +
+        `</g>`,
+    )
+    .join("");
+
+  const mentions = mapMentions
+    ? mapMentionEdges()
+        .map((m, i) => {
+          const a = pos[m.a];
+          const b = pos[m.b];
+          if (!a || !b) return "";
+          return `<path class="mment${touches(m) ? " hot" : ""}" data-m="${i}" d="${mapCurve(a, b, 0.1)}" stroke-width="${Math.min(2.4, 0.8 + m.weight * 0.14)}"/>`;
+        })
+        .join("")
+    : "";
+
+  const edges = mapEdges()
+    .map((e, i) => {
+      const a = pos[e.a];
+      const b = pos[e.b];
+      if (!a || !b) return "";
+      return `<path class="medge${touches(e) ? " hot" : ""}" data-e="${i}" d="${mapCurve(a, b, 0.13)}" stroke-width="${Math.min(3.4, 0.9 + e.weight * 0.28)}"/>`;
+    })
+    .join("");
+
+  const selName = mapSel && mapSel.t === "s" ? mapSel.k : null;
+  const order = selName
+    ? names.filter((n) => n !== selName).concat(selName)
+    : names;
+  const nodes = order
+    .map((n) => {
+      const p = pos[n];
+      const sk = (state.skills || []).find((s) => s.name === n);
+      const r = mapRadius(n);
+      const isSel = n === selName;
+      const g = (graphData && graphData.skills[n]) || null;
+      const dupe =
+        g && g.dupes && g.dupes.length
+          ? `<circle class="mdupe" cx="${p.x + r * 0.78}" cy="${p.y - r * 0.78}" r="2.6"/>`
+          : "";
+      const code =
+        mapLens === "code" && g && g.code
+          ? `<circle class="mcode" cx="${p.x - r * 0.78}" cy="${p.y - r * 0.78}" r="2.6"/>`
+          : "";
+      return (
+        `<g class="mnode${isSel ? " sel" : ""}${focus && focus.has(n) ? " hit" : ""}" data-map-skill="${esc(n)}" style="${taxHueStyle(groupAxis, (sk && sk[groupAxis]) || "")}">` +
+        `<circle class="mb" cx="${p.x}" cy="${p.y}" r="${r}"/>${dupe}${code}` +
+        `<title>${esc(n)}</title>` +
+        `<text class="mnl" x="${p.x}" y="${p.y + r + 12}">${esc(isSel ? n : labels[n])}</text></g>`
+      );
+    })
+    .join("");
+
+  return {
+    html: `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Skill map">${fields}<g>${mentions}</g><g>${edges}</g>${nodes}</svg>`,
+    focused: !!focus,
+  };
+}
+
+function relChip(rel, n) {
+  return `<span class="mrel">${esc(rel)}${n ? ` ${n}` : ""}</span>`;
+}
+
+// What the map cannot say in circles: which concepts tie two skills together,
+// what a skill duplicates inside itself, how much code it carries.
+function mapInspectorHtml() {
+  // The strip above the canvas names the state and carries the action; this
+  // column says what the state means, so the two are complementary rather
+  // than the same sentence twice, 300px apart.
+  if (graphState === "loading")
+    return `<div class="mi-empty">The circles are placed from the library. What is still coming is what ties them: <code>graphify-out/graph.json</code>.</div>`;
+  if (graphState === "error")
+    return `<div class="mi-empty">The pipeline writes the graph; the dashboard only reads it. Nothing here is lost — the map is drawn from the library either way.</div>`;
+  if (!graphData || !graphData.hasGraph)
+    return `<div class="mi-empty"><b>Nothing extracted yet.</b><p>The circles come from the library, the lines from extraction. They appear once <code>graphify-out/graph.json</code> exists.</p></div>`;
+  if (mapSel && mapSel.t === "s") return mapSkillCardHtml(mapSel.k);
+  if (mapSel) return mapPairCardHtml(mapSel);
+  return mapSummaryHtml();
+}
+
+// Proposte cross-famiglia che il modello ha confermato con la sua prova ma che
+// il punteggio ha lasciato fuori. Il punteggio e' un'autovalutazione grossolana
+// (si ammassa su 0.8/0.98/0.99): la frase la legge una persona in due secondi.
+// A proposal between two skills the filter removed is not about the map on
+// screen. Both ends have to be on it.
+function weakCrossFor(forSkill) {
+  const vis = mapNames();
+  return (graphData?.weakCross || []).filter(
+    (w) =>
+      vis.has(w.a) &&
+      vis.has(w.b) &&
+      (!forSkill || w.a === forSkill || w.b === forSkill),
+  );
+}
+// The evidence is a sentence, sometimes a paragraph. Two lines are enough to
+// judge whether the pair is worth opening; the rest is one click away.
+function weakBlockHtml(w, forSkill) {
+  const other = forSkill ? (w.a === forSkill ? w.b : w.a) : `${w.a} → ${w.b}`;
+  return (
+    `<div class="mi-weak"><div class="mi-weak-top">` +
+    `<span class="mrel">${esc(w.relation)}</span>` +
+    `<span class="nm">${esc(other)}</span>` +
+    `<span class="w">${w.score.toFixed(2)}</span></div>` +
+    (w.evidence
+      ? `<button class="mi-weak-ev clamp" type="button" data-expand="1"><span>${esc(w.evidence)}</span></button>`
+      : "") +
+    `</div>`
+  );
+}
+const WEAK_NOTE = `<p class="mi-note">Confermate dall'estrazione con la loro prova, sotto la soglia di punteggio del vault. Restano nel layer: la prossima passata le riconferma o le lascia cadere.</p>`;
+function weakCrossHtml(forSkill) {
+  const weak = weakCrossFor(forSkill);
+  if (!weak.length) return "";
+  return (
+    `<div class="mi-sec">Proposte non promosse (${weak.length})</div>` +
+    weak.map((w) => weakBlockHtml(w, forSkill)).join("") +
+    WEAK_NOTE
+  );
+}
+// Eighty-one proposals, each with its own paragraph of evidence, do not fit a
+// 320px rail at any page size: that column is forty-five characters of prose,
+// and paging it only spreads the same illegibility over ten screens. They are
+// homogeneous records — pair, relation, score, evidence — so they take the
+// shape this app already uses for dense lists and the width the content area
+// already has. The list stands in for the map while it is open; with no map
+// there is nothing to inspect, so the inspector's column goes to it too.
+function weakLedgerHtml() {
+  const weak = weakCrossFor(null);
+  // One section per relation type, biggest first, strongest score first inside.
+  // The type is the axis you actually scan by: "what does the extractor think
+  // hands off to what" is a different question from "what duplicates what".
+  const byRel = new Map();
+  for (const w of weak) {
+    if (!byRel.has(w.relation)) byRel.set(w.relation, []);
+    byRel.get(w.relation).push(w);
+  }
+  const sections = [...byRel.entries()]
+    .sort((x, y) => y[1].length - x[1].length)
+    .map(([rel, items]) => {
+      const rows = items
+        .sort((a, b) => b.score - a.score)
+        .map(
+          (w) =>
+            `<tr data-prop="1"><td class="pw-pair">` +
+            `<button class="pw-sk" data-skillref="${esc(w.a)}" type="button">${esc(w.a)}</button>` +
+            `<span class="pw-arr">→</span>` +
+            `<button class="pw-sk" data-skillref="${esc(w.b)}" type="button">${esc(w.b)}</button>` +
+            `</td><td class="pw-ev"><span>${esc(w.evidence || "")}</span></td>` +
+            `<td class="pw-sc">${w.score.toFixed(2)}</td></tr>`,
+        )
+        .join("");
+      return (
+        `<tbody class="pw-grp"><tr class="pw-sec"><td colspan="3">` +
+        `<span class="pw-sechead"><span class="catdot"></span><h3>${esc(rel)}</h3>` +
+        `<span class="n">${items.length}</span></span></td></tr>${rows}</tbody>`
+      );
+    })
+    .join("");
+  return (
+    `<div class="propsview" id="propsledger">` +
+    `<button class="mi-back" id="props-back" type="button">‹ Map</button>` +
+    `<div class="pw-head"><h2>Proposte non promosse</h2>` +
+    `<span class="cnt">${weak.length} pair${weak.length === 1 ? "" : "s"} · ${byRel.size} relation type${byRel.size === 1 ? "" : "s"}</span>` +
+    `<span class="why">confermate dall'estrazione con la loro prova, sotto la soglia di punteggio del vault</span></div>` +
+    (weak.length
+      ? `<div class="tscroll"><table class="propsw">${sections}</table></div>`
+      : `<div class="empty">Nessuna proposta per le skill che i filtri lasciano sulla mappa.</div>`) +
+    `</div>`
+  );
+}
+
+function mapSummaryHtml() {
+  const m = graphData.meta;
+  const names = filteredSkills().map((s) => s.name);
+  const linked = new Set(mapEdges().flatMap((e) => [e.a, e.b]));
+  const famSize = {};
+  for (const n of names) famSize[famOf(n)] = (famSize[famOf(n)] || 0) + 1;
+  const isolated = names.filter((n) => !linked.has(n) && famSize[famOf(n)] > 1);
+  const dupes = names.filter(
+    (n) => (graphData.skills[n]?.dupes || []).length,
+  ).length;
+  const heavy = mapEdges().filter((e) => e.weight >= 5).length;
+  // Every finding counts what is on the canvas, filter included. The three
+  // that used to read straight off meta counted the whole vault, so under a
+  // filter the panel stated a finding about skills it was not drawing.
+  const crossMentions = mapMentionEdges().filter(
+    (x) => famOf(x.a) !== famOf(x.b),
+  ).length;
+  const carryingCode = names.filter((n) => graphData.skills[n]?.code).length;
+  const vis = mapNames();
+  const weak = (graphData.weakCross || []).filter(
+    (w) => vis.has(w.a) && vis.has(w.b),
+  );
+  const row = (lens, label, n) =>
+    `<button class="mi-row" data-lens="${lens}"><span class="nm">${label}</span><span class="w">${n}</span></button>`;
+  const code = m.code;
+  return (
+    `<div class="mi-head"><h3>Vault graph</h3><div class="mi-stamp">${m.builtAtCommit ? `built at <code>${esc(m.builtAtCommit.slice(0, 7))}</code>` : "build commit unknown"}</div></div>` +
+    // With a rail filter on, the findings above count what is drawn and the
+    // coverage below counts the vault the graph was built from. Say which is
+    // which rather than letting two scopes sit unlabelled in one panel.
+    (anyFilterOn()
+      ? `<div class="mi-scope">Findings cover the <b>${names.length} of ${(state.skills || []).length}</b> skills the filter leaves on the map. Coverage below is the whole vault.</div>`
+      : "") +
+    `<div class="mi-sec">Findings</div>` +
+    row("dupes", "Skills stating the same rule twice", dupes) +
+    row("coupled", "Pairs coupled hard enough to merge", heavy) +
+    row("mentions", "Cross-family links extraction cannot see", crossMentions) +
+    row("unlinked", "Skills nothing points at, family aside", isolated.length) +
+    (code ? row("code", "Skills carrying code", carryingCode) : "") +
+    (weak.length
+      ? `<button class="mi-row has-panel" data-weak="1"><span class="nm">Cross-family proposals not promoted</span><span class="w">${weak.length}</span><span class="chev">›</span></button>`
+      : "") +
+    `<div class="mi-sec">Coverage</div>` +
+    `<dl class="mi-kv">` +
+    `<dt>Skills indexed</dt><dd>${m.skillsIndexed} of ${m.skillsOnDisk}</dd>` +
+    `<dt>Concepts</dt><dd>${m.nodes.toLocaleString("en-US")}</dd>` +
+    `<dt>Relations</dt><dd>${m.links.toLocaleString("en-US")}</dd>` +
+    // Coverage describes the vault the graph was built from, so its
+    // denominator is every extracted relation, not the ones a filter leaves.
+    `<dt>Cross-family relations</dt><dd>${m.crossFamilyEdges} of ${(graphData.edges || []).length}</dd>` +
+    (code
+      ? `<dt>Code graph</dt><dd>${code.nodes.toLocaleString("en-US")} nodes${code.commitsBehind ? `, ${code.commitsBehind} behind` : ""}</dd>`
+      : "") +
+    `</dl>` +
+    `<p class="mi-note">Extraction runs one family at a time, and ${m.singletonFamilies} of the ${m.families} families hold a single skill. Two skills in different families are never in the same prompt, so a relation between them cannot be extracted: read isolation against the family it sits in.</p>` +
+    (code
+      ? `<p class="mi-note">Code lives in its own graph, joined here on the skill folder. It can say how much code a skill carries, never which concept that code implements.</p>`
+      : "")
+  );
+}
+
+function mapSkillCardHtml(name) {
+  const sk = (state.skills || []).find((s) => s.name === name);
+  const g = graphData.skills[name] || {
+    concept: 0,
+    document: 0,
+    rationale: 0,
+    dupes: [],
+  };
+  const rel = mapEdges()
+    .filter((e) => e.a === name || e.b === name)
+    .sort((a, b) => b.weight - a.weight);
+  const ment = mapMentionEdges()
+    .filter((m) => m.a === name || m.b === name)
+    .sort((a, b) => b.weight - a.weight);
+  const chips = axisList()
+    .map((a) =>
+      sk && sk[a.id]
+        ? `<span class="mchip" style="${taxHueStyle(a.id, sk[a.id])}"><span class="d"></span>${esc(humanTax(sk[a.id]))}</span>`
+        : "",
+    )
+    .join("");
+  const relRow = (e) => {
+    const other = e.a === name ? e.b : e.a;
+    const top = Object.entries(e.relations).sort((x, y) => y[1] - x[1])[0][0];
+    return `<button class="mi-row" data-pair="${esc(e.a)}|${esc(e.b)}">${relChip(top)}<span class="nm">${esc(other)}</span><span class="w">${e.weight}</span></button>`;
+  };
+  const mentRow = (m) => {
+    const other = m.a === name ? m.b : m.a;
+    return `<button class="mi-row" data-ment="${esc(m.a)}|${esc(m.b)}">${relChip(m.crossFamily ? "cross-family" : "mention")}<span class="nm">${esc(other)}</span><span class="w">${m.weight}</span></button>`;
+  };
+  return (
+    `<div class="mi-head"><h3>${esc(sk ? sk.title : name)}</h3><div class="mi-stamp"><code>${esc(name)}</code></div></div>` +
+    (chips ? `<div class="mi-chips">${chips}</div>` : "") +
+    (sk && sk.description
+      ? `<p class="mi-desc">${esc(sk.description)}</p>`
+      : "") +
+    `<div class="mi-sec">Knowledge</div>` +
+    `<dl class="mi-kv"><dt>Concepts</dt><dd>${g.concept}</dd><dt>Documents</dt><dd>${g.document}</dd><dt>Rationale</dt><dd>${g.rationale}</dd></dl>` +
+    `<div class="mi-sec">Relations${rel.length ? ` (${rel.length})` : ""}</div>` +
+    (rel.length
+      ? rel.map(relRow).join("")
+      : `<p class="mi-note">No other skill points at this one, and it points at none.${famOf(name) && (state.skills || []).filter((s) => famOf(s.name) === famOf(name)).length === 1 ? " It is alone in its family, so extraction never had a second skill to relate it to." : " Either it is genuinely standalone, or its handoffs are implied in prose the extractor could not resolve."}</p>`) +
+    (ment.length
+      ? `<div class="mi-sec">Mentions (${ment.length})</div>` +
+        ment.map(mentRow).join("") +
+        `<p class="mi-note">Named in the markdown, never extracted as a relation.</p>`
+      : "") +
+    (g.dupes && g.dupes.length
+      ? `<div class="mi-sec">Inside this skill</div>` +
+        `<div class="mi-flag"><b>${g.dupes.length} duplicate concept pair${g.dupes.length === 1 ? "" : "s"}.</b> The same rule stated twice in different words.</div>` +
+        g.dupes
+          .map(
+            (p) =>
+              `<div class="mi-pair">${esc(p[0])} <em>duplicates</em> ${esc(p[1])}</div>`,
+          )
+          .join("")
+      : "") +
+    (g.code
+      ? `<div class="mi-sec">Code</div><dl class="mi-kv">` +
+        g.code.files
+          .map((f) => `<dt><code>${esc(f.path)}</code></dt><dd>${f.nodes}</dd>`)
+          .join("") +
+        `</dl><p class="mi-note">Node counts from the code graph, joined on the skill folder.</p>`
+      : "") +
+    weakCrossHtml(name) +
+    `<div class="mi-btns"><button class="mi-btn p" data-open="${esc(name)}">Open skill</button></div>`
+  );
+}
+
+function mapPairCardHtml(sel) {
+  const isMention = sel.t === "m";
+  const e = (isMention ? mapMentionEdges() : mapEdges()).find(
+    (x) => x.a === sel.a && x.b === sel.b,
+  );
+  if (!e) return mapSummaryHtml();
+  const head =
+    `<div class="mi-head"><h3>${esc(e.a)} <span class="ar">↔</span> ${esc(e.b)}</h3>` +
+    `<div class="mi-stamp">${e.weight} ${isMention ? `mention${e.weight === 1 ? "" : "s"} in markdown` : `relation${e.weight === 1 ? "" : "s"}`}</div></div>`;
+  if (isMention)
+    return (
+      head +
+      `<div class="mi-chips">${relChip(e.crossFamily ? "cross-family" : "same family")}</div>` +
+      `<div class="mi-flag">${
+        e.crossFamily
+          ? `<b>Extraction never saw these two together.</b> <code>${esc(famOf(e.a))}</code> and <code>${esc(famOf(e.b))}</code> are separate runs, so no relation between them can be produced. This is a name match in the text, not an extracted relation.`
+          : `Same family, named in the text but not extracted as a relation. Either the mention is incidental, or the extractor missed it.`
+      }</div>` +
+      `<div class="mi-btns"><button class="mi-btn" data-open="${esc(e.a)}">Open ${esc(e.a)}</button><button class="mi-btn" data-open="${esc(e.b)}">Open ${esc(e.b)}</button></div>`
+    );
+  return (
+    head +
+    `<div class="mi-chips">${Object.entries(e.relations)
+      .sort((x, y) => y[1] - x[1])
+      .map(([r, n]) => relChip(r, n))
+      .join("")}</div>` +
+    `<div class="mi-sec">What links them</div>` +
+    e.samples
+      .map(
+        (s) =>
+          `<div class="mi-pair">${esc(s.source)} <em>${esc(s.rel)}</em> ${esc(s.target)}</div>`,
+      )
+      .join("") +
+    (e.weight >= 5
+      ? `<div class="mi-flag"><b>Heavy coupling.</b> ${e.weight} relations across two skills is either a shared reference to extract, or a split that should be one skill.</div>`
+      : "") +
+    `<div class="mi-btns"><button class="mi-btn" data-open="${esc(e.a)}">Open ${esc(e.a)}</button><button class="mi-btn" data-open="${esc(e.b)}">Open ${esc(e.b)}</button></div>`
+  );
+}
+
+// A lens answers a question ("what does nothing point at?"), so picking one
+// clears the selection: the two compete for the same attention.
+function setMapLens(id) {
+  if (id === "mentions") {
+    mapMentions = true;
+    mapLens = null;
+  } else {
+    mapLens = mapLens === id ? null : id;
+  }
+  mapSel = null;
+  // A lens is a way of reading the canvas. Picking one while a finding's list
+  // stands in for it is a request for the canvas back.
+  if (mapPanel) {
+    mapPanel = null;
+    return repaintLibrary();
+  }
+  const rail = $("#librail");
+  if (rail) rail.innerHTML = renderRailHtml();
+  paintMap();
+}
+
+// Rail sections the map adds: what kind of relation is drawn, and the lenses
+// that answer a question rather than filter a field.
+function mapRailHtml() {
+  if (libView !== "map" || libArchived) return "";
+  // Relations and the lenses over them are about edges. With no graph there are
+  // none, and a lens reading "Unlinked 46" would be counting the absence of a
+  // file rather than a property of the vault.
+  if (!graphData || !graphData.hasGraph) return "";
+  const names = filteredSkills().map((s) => s.name);
+  const linked = new Set(mapEdges().flatMap((e) => [e.a, e.b]));
+  const famSize = {};
+  for (const n of names) famSize[famOf(n)] = (famSize[famOf(n)] || 0) + 1;
+  const counts = {
+    unlinked: names.filter((n) => !linked.has(n) && famSize[famOf(n)] > 1)
+      .length,
+    coupled: mapEdges().length,
+    dupes: names.filter((n) => (graphData?.skills[n]?.dupes || []).length)
+      .length,
+    code: names.filter((n) => graphData?.skills[n]?.code).length,
+  };
+  const lens = (id, label) =>
+    `<button class="ritem lens${mapLens === id ? " on" : ""}" data-lens="${id}" type="button"><span class="d"></span>${label}<span class="n">${counts[id]}</span></button>`;
+  return (
+    `<div class="rl">Relations</div>` +
+    `<button class="ritem on" type="button" disabled><span class="ln"></span>Extracted<span class="n">${mapEdges().length}</span></button>` +
+    `<button class="ritem${mapMentions ? " on" : ""}" id="mentoggle" type="button"><span class="ln dash"></span>Mentions<span class="n">${mapMentionEdges().length}</span></button>` +
+    `<div class="rl">Lenses</div>` +
+    lens("unlinked", "Unlinked") +
+    lens("coupled", "Coupled pairs") +
+    lens("dupes", "Duplicates inside") +
+    (counts.code ? lens("code", "Carrying code") : "")
+  );
+}
+
+// The map is two things arriving separately: the skills, which the library
+// already holds, and the relations between them, which come from the graph.
+// So a missing graph is not a missing map — the fields, the circles and the
+// labels draw from /api/state alone, and only the edges wait. What used to be
+// a 60ch box standing in for the whole canvas is now a line above it: the
+// state names itself where the eye already is, and the map underneath is real.
+function mapStripHtml() {
+  const line = (cls, text, action) =>
+    `<div class="mapstrip-in ${cls}"><span class="d" aria-hidden="true"></span>` +
+    `<span class="t">${text}</span>` +
+    (action ? `<span class="a">${action}</span>` : "") +
+    `</div>`;
+  // Nothing while the read is in flight. It lasts a few hundred milliseconds:
+  // a sentence that cannot be finished before it disappears is a flash, not
+  // information. The faded nodes say the map is not final yet, and the top
+  // progress bar says something is being read — that is the whole message.
+  if (graphState === "loading") return "";
+  if (graphState === "error")
+    return line(
+      "quiet",
+      "<b>The graph could not be read</b> — a build in flight leaves the file half written",
+      `<button class="btn" id="mapretry" type="button">Try again</button>`,
+    );
+  if (!graphData || !graphData.hasGraph)
+    return line(
+      "quiet",
+      "<b>No relations extracted yet</b> — the map shows the skills, not what ties them",
+      `<button class="btn" id="mapretry" type="button">Check again</button>`,
+    );
+  if (!filteredSkills().length)
+    return line(
+      "quiet",
+      "<b>No skill matches these filters</b> — the map draws the same set the rail filters",
+      `<button class="btn" id="mapclear" type="button">Clear filters</button>`,
+    );
+  return "";
+}
+
+// Paint the plot into its container. Called after the library renders and on
+// resize: the layout needs a measured width, which markup alone cannot give.
+function paintMap() {
+  const plot = $("#mapplot");
+  if (!plot) return;
+  // A selection that the filter just removed would keep the inspector on a
+  // skill no longer on the canvas.
+  if (mapSel) {
+    const vis = mapNames();
+    const gone =
+      mapSel.t === "s"
+        ? !vis.has(mapSel.k)
+        : !vis.has(mapSel.a) || !vis.has(mapSel.b);
+    if (gone) mapSel = null;
+  }
+  const strip = $("#mapstrip");
+  if (strip) strip.innerHTML = mapStripHtml();
+  // Only an empty set leaves nothing to draw. Without a graph the fields and
+  // the circles are still real — mapEdges() simply returns none — so the map
+  // draws either way and says so above itself.
+  const hasGraph = !!(graphData && graphData.hasGraph);
+  if (!filteredSkills().length) {
+    plot.innerHTML = "";
+    plot.classList.remove("focused", "hassel", "skeleton");
+    plot.removeAttribute("role");
+    plot.removeAttribute("aria-label");
+  } else {
+    const width = Math.max(520, plot.clientWidth - 4);
+    const { html, focused } = mapSvgHtml(width);
+    plot.innerHTML = html;
+    plot.classList.toggle("focused", focused);
+    plot.classList.toggle("hassel", !!mapSel);
+    plot.classList.toggle("skeleton", !hasGraph);
+    // The plot is a mouse-only surface: its circles are SVG shapes, not
+    // controls. Naming it as one image at least tells a screen-reader user what
+    // they are skipping and that the same data is in the table.
+    const groups = groupedSkills(filteredSkills());
+    const n = groups.reduce((sum, g) => sum + g.items.length, 0);
+    // Ungrouped, groupKeyOf() returns "" for every skill and they all land in
+    // one bucket: announcing "in 1 group" would describe the fallback, not the
+    // map on screen.
+    const where =
+      groupAxis === "none"
+        ? ""
+        : ` in ${groups.length} ${groupAxis} group${groups.length === 1 ? "" : "s"}`;
+    plot.setAttribute("role", "img");
+    plot.setAttribute(
+      "aria-label",
+      hasGraph
+        ? `Map of ${n} skill${n === 1 ? "" : "s"}${where}, with their extracted relations. The same skills are listed in the table view.`
+        : `Map of ${n} skill${n === 1 ? "" : "s"}${where}. The relations between them are not drawn yet. The same skills are listed in the table view.`,
+    );
+  }
+  const insp = $("#mapinsp");
+  if (insp) {
+    insp.innerHTML = mapInspectorHtml();
+    fitInspector(insp);
+  }
+}
+
+// The ceiling that keeps the pinned inspector pinned. A sticky box comes loose
+// as soon as it is taller than the room between the top it pins to and the
+// bottom of its containing block, and the map's block ends before the scroll
+// does — the column's own bottom padding sits under it. Bound the panel to
+// that room and the difference can never go positive, so it holds all the way
+// down; the heading is pinned again inside it (see ui.css) so the panel's own
+// scrolling cannot carry away what the column is about.
+//
+// Measured rather than written as a viewport formula: the scrollport sits
+// under a header and a source band whose heights are not this file's to
+// assume, and an error of a few pixels here is a slide of a few pixels there.
+function fitInspector(insp) {
+  const port = insp.closest(".libmain");
+  if (!port) return;
+  const cs = getComputedStyle(port);
+  const room =
+    port.clientHeight -
+    (parseFloat(cs.paddingTop) || 0) -
+    (parseFloat(cs.paddingBottom) || 0);
+  insp.style.setProperty("--insp-max", `${Math.max(240, Math.round(room))}px`);
+}
+
+// The server answers with hasGraph:false when graph.json is missing OR when it
+// was read half written mid build — degrading instead of taking the dashboard
+// down. Caching that answer for the session is what made a map stay empty
+// until the page was reloaded, so an unusable answer is retried. The cooldown
+// is what keeps that from turning into a fetch per rail click: the library
+// re-renders (and re-mounts the map) on every filter.
+const GRAPH_RETRY_MS = 15000;
+let graphAt = 0; // when the last /api/graph attempt landed
+async function mountMap(force = false) {
+  paintMap();
+  if (graphState === "loading") return;
+  if (graphData && graphData.hasGraph && !force) return;
+  if (!force && graphAt && Date.now() - graphAt < GRAPH_RETRY_MS) return;
+  graphState = "loading";
+  paintMap();
+  // Say the read is happening with the same top progress bar every other async
+  // view uses, on top of the state the canvas now carries.
+  navStart();
+  const r = await api("/api/graph");
+  navStop();
+  graphAt = Date.now();
+  graphState = r.ok ? "idle" : "error";
+  graphData = r.ok ? r.data : null;
+  if (libView !== "map") return;
+  const rail = $("#librail");
+  if (rail) rail.innerHTML = renderRailHtml();
+  paintMap();
+}
+// The pipeline rebuilds the graph while the page is open, and the freshness
+// poll is the only thing that hears about it. Drop the cached read once per
+// build commit, so the map follows a rebuild without a reload.
+let graphSeenCommit = null;
+function invalidateGraphIfRebuilt() {
+  const built = graphData && graphData.meta && graphData.meta.builtAtCommit;
+  const fresh = freshData && freshData.freshThroughCommit;
+  if (!built || !fresh || built === fresh) return;
+  if (graphSeenCommit === fresh) return;
+  graphSeenCommit = fresh;
+  graphData = null;
+  graphAt = 0;
+  if (libView === "map" && $("#mapplot")) mountMap();
+}
+
 // Per-skill link summary from the runtime matrix, in the same words as
 // the Status legend: linked / partial / not linked / conflict.
 function linkStateOf(s) {
   const states = (state.matrix || [])
     .filter((m) => m.skill === s.name)
+    // An overridden pair is not a measurement: the runtime owns that name
+    // (external) or is meant not to have it (disabled). Left in, it would hold
+    // a fully projected skill at "partial" forever — the exact report the
+    // override was written to stop.
+    .filter((m) => m.state !== "external" && m.state !== "disabled")
     .map((m) => m.state);
   // "served" (in-place) covers a skill just like a symlink does.
   const covered = (x) => x === "linked" || x === "served";
@@ -1052,40 +2169,123 @@ function syncCell(v) {
     return `<span class="badge acc" title="In remote commits not pulled yet">to pull</span>`;
   return `<span class="badge ok" title="Committed and aligned with the remote">synced</span>`;
 }
+// The ledger is table-layout:fixed (so a column cannot resize under you while
+// filtering hides rows), which also means the browser will not size a column to
+// its content — we measure it. Labels come from the whole vault rather than the
+// current filter, so the widths stay put as you filter.
+//
+// The word each sync state renders as, so a column can be measured against what
+// it will actually show.
+const SYNC_WORD = {
+  clean: "synced",
+  dirty: "to commit",
+  ahead: "to push",
+  behind: "to pull",
+};
+// A pill column: an 11.5px label inside a badge, inside a cell. The +6 is
+// slack: canvas measureText resolves the font stack on its own and lands a few
+// px under what Figtree actually renders, which is enough to ellipsize a label
+// the column was sized to hold.
+const PILL_COL = { size: 11.5, weight: 600, pad: 18 + 16 + 6 };
+// A plain-text column (Updated): no pill, wider cell padding.
+const TEXT_COL = { size: 12, weight: 400, pad: 20 + 6 };
+const textWidth = (() => {
+  let cx = null;
+  return (text, font, tracking = 0) => {
+    if (!cx) cx = document.createElement("canvas").getContext("2d");
+    cx.font = font;
+    return cx.measureText(text).width + tracking * text.length;
+  };
+})();
+/** The distinct labels a column will actually show, taken from the whole vault
+ *  rather than the current filter so a column does not resize while you filter.
+ *  Every column follows this same rule — sizing one against its full vocabulary
+ *  and another against what is present is what left Status wider than Area for
+ *  no visible reason. */
+// Sized against the set the table is about to render, not the active library:
+// the archive holds statuses (suspended, deprecated) the live vault may not,
+// and a column measured on the wrong set clips the badge it is sizing for.
+function presentLabels(pick) {
+  return [...new Set(libSkills().map(pick).filter(Boolean))];
+}
+/** Width in px for a column showing `labels`, never narrower than its own
+ *  heading (10.5px bold uppercase, 0.06em tracking, 10px cell sides). */
+function colWidth(labels, headLabel, { size, weight, pad }) {
+  const fam = getComputedStyle(document.body).fontFamily;
+  const body = labels.length
+    ? Math.max(...labels.map((l) => textWidth(l, `${weight} ${size}px ${fam}`)))
+    : 0;
+  const head = textWidth(
+    String(headLabel).toUpperCase(),
+    `700 10.5px ${fam}`,
+    10.5 * 0.06,
+  );
+  return Math.ceil(Math.max(body + pad, head + 20));
+}
 // Ledger (list view): one row per skill, a tbody per group so filtering
 // can hide whole groups; column headers write sortMode/sortDir, which
 // groupedSkills() consumes — table order and arrow-nav stay in step.
 function renderTableHtml() {
-  const orth = orthAxisOf();
-  const axisCols = groupAxis === "none" ? ["domain", "layer"] : [orth];
+  const orth = orthAxesOf();
   const arrow = (c) =>
     sortMode === c ? `<span class="arr">${sortDir > 0 ? "▲" : "▼"}</span>` : "";
+  // One real column per axis, each sized to what it actually holds. Description
+  // carries no width, so it absorbs whatever the sized columns leave.
+  const axisCells = (id) =>
+    colWidth(
+      [
+        ...new Set(
+          libSkills()
+            .map((s) => s[id])
+            .filter(Boolean),
+        ),
+      ].map(humanTax),
+      axisLabel(id),
+      PILL_COL,
+    );
   const head =
-    `<thead><tr><th class="selcol"></th><th data-sort="name" style="width:19%">Skill ${arrow("name")}</th><th>Description</th>` +
-    axisCols
+    // The archive drops the two runtime columns, so the name takes back the
+    // width they were holding instead of leaving it all to the description.
+    `<thead><tr><th class="selcol"></th><th data-sort="name" style="width:${libArchived ? 24 : 16}%">Skill ${arrow("name")}</th><th>Description</th>` +
+    orth
       .map(
-        (a) =>
-          `<th style="width:11%">${a === "layer" ? "Layer" : "Domain"}</th>`,
+        (a) => `<th style="width:${axisCells(a)}px">${esc(axisLabel(a))}</th>`,
       )
       .join("") +
-    `<th style="width:9%">Status</th><th style="width:9%">Links</th><th style="width:9%">Sync</th><th data-sort="updated" style="width:10%">Updated ${arrow("updated")}</th></tr></thead>`;
+    `<th style="width:${colWidth(
+      presentLabels((s) => statusLabel(s.status || "active").toLowerCase()),
+      "Status",
+      PILL_COL,
+    )}px">Status</th>` +
+    // Where a skill is served, and whether the vault has it committed. Neither
+    // applies to an archived skill: it is served nowhere, and the archive rows
+    // used to state a "partial / synced" nothing had produced.
+    (libArchived
+      ? ""
+      : `<th style="width:${colWidth(presentLabels(linkStateOf), "Links", PILL_COL)}px">Links</th>` +
+        `<th style="width:${colWidth(
+          presentLabels((s) => SYNC_WORD[s.sync || "clean"]),
+          "Sync",
+          PILL_COL,
+        )}px">Sync</th>`) +
+    `<th data-sort="updated" style="width:${colWidth(["Yesterday", "Sep 30"], `${libArchived ? "Archived" : "Updated"} ▲`, TEXT_COL)}px">${libArchived ? "Archived" : "Updated"} ${arrow("updated")}</th></tr></thead>`;
   const bodies = groupedSkills()
     .map((g) => {
       const secRow =
         groupAxis === "none"
           ? ""
-          : `<tr class="lsec"><td colspan="${7 + axisCols.length}"><span class="lsechead" style="${taxHueStyle(groupAxis, g.key)}"><span class="catdot"></span><h2>${esc(g.label)}</h2><span class="n">${g.items.length} skill${g.items.length === 1 ? "" : "s"}</span></span></td></tr>`;
+          : `<tr class="lsec"><td colspan="${(libArchived ? 5 : 7) + orth.length}"><span class="lsechead" style="${taxHueStyle(groupAxis, g.key)}"><span class="catdot"></span><h2>${esc(g.label)}</h2><span class="n">${g.items.length} skill${g.items.length === 1 ? "" : "s"}</span></span></td></tr>`;
       const rows = g.items
         .map((s) => {
           const hay = skillHay(s);
-          const cells = axisCols
+          const cells = orth
             .map((a) =>
               s[a]
-                ? `<td>${taxChip(a, s[a])}</td>`
-                : `<td class="lnone">–</td>`,
+                ? `<td class="ltax">${taxChip(a, s[a])}</td>`
+                : `<td class="ltax lnone">–</td>`,
             )
             .join("");
-          return `<tr class="${libSel.has(s.name) ? "sel" : ""}" data-skill="${esc(s.name)}" data-hay="${esc(hay)}" data-domain="${esc(s.domain || "")}" data-layer="${esc(s.layer || "")}" data-status="${esc(s.status || "active")}" data-link="${esc(linkStateOf(s))}" data-sync="${esc(s.sync || "clean")}"><td class="selcol"><span class="selbox" aria-hidden="true"></span></td><td><span class="lname">${skillTile(s)}${esc(s.title)}</span></td><td class="ldesc">${esc(s.description || "")}</td>${cells}<td>${statusBadge(s.status, true)}</td><td>${linkCell(s)}</td><td>${syncCell(s.sync)}</td><td class="lwhen">${esc(fmtWhen(s.modified))}</td></tr>`;
+          return `<tr class="${libSel.has(s.name) ? "sel" : ""}" data-skill="${esc(s.name)}" data-hay="${esc(hay)}" ${axisDataAttrs(s)} data-status="${esc(s.status || "active")}" ${libArchived ? "" : `data-link="${esc(linkStateOf(s))}" data-sync="${esc(s.sync || "clean")}"`}><td class="selcol"><span class="selbox" aria-hidden="true"></span></td><td><span class="lname">${skillTile(s)}<span class="lnt">${esc(s.title)}</span></span></td><td class="ldesc">${esc(s.description || "")}</td>${cells}<td>${statusBadge(s.status, true)}</td>${libArchived ? "" : `<td>${linkCell(s)}</td><td>${syncCell(s.sync)}</td>`}<td class="lwhen">${esc(fmtWhen(s.modified))}</td></tr>`;
         })
         .join("");
       return `<tbody class="lgroup">${secRow}${rows}</tbody>`;
@@ -1118,11 +2318,37 @@ function listJoin(a) {
   if (a.length <= 1) return a.join("");
   return a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
 }
+// Switching view mode, sorting, filtering or dismissing a banner all repaint
+// the library in place. The view fade belongs to a real view change: re-arming
+// it here dips the whole page to zero opacity and back, which reads as a flash.
+function repaintLibrary() {
+  app().classList.add("norefade");
+  renderLibrary();
+}
+
 function renderLibrary() {
   const consumers = listJoin(Object.keys(state.consumers).map(rtName));
   const total = libSkills().length;
+  // The set decides which controls exist at all: an axis the set does not
+  // carry is not offered, here or in the rail, and neither is a status it does
+  // not hold.
+  normalizeGroupAxis();
+  normalizeStatusFilter();
+  // Archiving takes a skill out of extraction, so archived skills have no
+  // nodes and no relations. The archive therefore does not offer the map at
+  // all — a mode that can only render an explanation is a dead end, not a
+  // mode. setLibArchived() steps off it on the way in and back onto it on the
+  // way out.
+  const canMap = !libArchived;
   let groupsHtml = "";
-  if (libView === "list") {
+  if (libView === "map" && mapPanel === "weak") {
+    // The finding's list stands in for the map, across the whole content area.
+    groupsHtml = weakLedgerHtml();
+  } else if (libView === "map") {
+    // The plot needs a measured width, so the shell goes in now and paintMap
+    // fills it once the element is in the document.
+    groupsHtml = `<div class="maplayout"><div class="mapcol"><div class="mapstrip" id="mapstrip"></div><div class="mapplot" id="mapplot"></div></div><aside class="mapinsp" id="mapinsp"></aside></div>`;
+  } else if (libView === "list") {
     groupsHtml = renderTableHtml();
   } else {
     for (const g of groupedSkills()) {
@@ -1137,71 +2363,213 @@ function renderLibrary() {
   const archived = state.archived || [];
   const GRID_IC =
     '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>';
+  const MAP_IC =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="4" cy="4.5" r="2"/><circle cx="12" cy="6.5" r="2"/><circle cx="7" cy="12" r="2"/><path d="M5.8 5.2 10.2 6M11 8.4 8.3 10.4M5.4 6.3 6.4 10"/></svg>';
   const LIST_IC =
     '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.5" cy="4" r="0.8" fill="currentColor" stroke="none"/><circle cx="2.5" cy="8" r="0.8" fill="currentColor" stroke="none"/><circle cx="2.5" cy="12" r="0.8" fill="currentColor" stroke="none"/></svg>';
+  // The source switcher rides above every My-skills view, the archive
+  // included: it is how you leave for another source from here.
+  const chips = sourceChipsHtml();
   setFixed(true);
-  app().innerHTML = `<div class="liblayout">
+  // Crossing between the two sets closes the view: the archive is what comes
+  // after the library, so the way across sits after the rows. The one place it
+  // cannot is the map, which is two screens tall — a link at the foot of it is
+  // a link nobody will scroll to. There the `a` shortcut is the way across.
+  const cross =
+    libView === "map"
+      ? ""
+      : libArchived
+        ? `<button class="archivedlink" id="back-active">← Active skills</button>`
+        : archived.length
+          ? `<button class="archivedlink" data-go="archived">Archived skills (${archived.length}) →</button>`
+          : "";
+  app().innerHTML = `<div class="liblayout${chips ? " hasband" : ""}">
+          ${chips}
           <aside class="librail" id="librail">${renderRailHtml()}</aside>
           <main class="libmain">
-            <div class="libhead"><div><h1 class="view">${libArchived ? "Archived skills" : "Your skill library"}</h1><p class="sub">${libArchived ? `${total} skill${total === 1 ? "" : "s"} retired from every runtime. Open one to read it, then Restore to bring it back.` : `${total} skill${total === 1 ? "" : "s"}${consumers ? `, shared with ${esc(consumers)}` : ""}. <span id="syncnote"></span>`}</p></div>${libArchived ? "" : '<button class="new" data-go="new">+ New skill</button>'}</div>
+            <div class="libhead"><div><h1 class="view">${libArchived ? "Archived skills" : "Your skill library"}</h1><p class="sub">${libArchived ? `${total} skill${total === 1 ? "" : "s"} retired from every runtime. Open one to read it, then Restore to bring it back.` : `${total} skill${total === 1 ? "" : "s"}${consumers ? `, shared with ${esc(consumers)}` : ""}. <span id="syncnote">${syncNoteHtml()}</span>`}</p></div>${libArchived ? "" : '<button class="new" data-go="new">+ New skill</button>'}</div>
             ${syncBannerHtml()}
             <div class="libbar">
               <div class="search">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5.2" stroke="currentColor" stroke-width="1.5"/><path d="M11 11l3.4 3.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                <input id="search" placeholder="Search your skills…" value="${esc(searchQ)}" />
+                <input id="search" placeholder="Search your skills…" aria-label="Search your skills" value="${esc(searchQ)}" />
               </div>
-              <div class="seg" id="viewtoggle"><button data-view="grid"${libView === "grid" ? ' class="on"' : ""} type="button" aria-label="Grid view">${GRID_IC}</button><button data-view="list"${libView === "list" ? ' class="on"' : ""} type="button" aria-label="List view">${LIST_IC}</button></div>
+              <div class="seg" id="viewtoggle"><button data-view="grid"${libView === "grid" ? ' class="on"' : ""} type="button" aria-label="Grid view">${GRID_IC}</button><button data-view="list"${libView === "list" ? ' class="on"' : ""} type="button" aria-label="List view">${LIST_IC}</button>${canMap ? `<button data-view="map"${libView === "map" ? ' class="on"' : ""} type="button" aria-label="Map view">${MAP_IC}</button>` : ""}</div>
             </div>
             <div id="groups">${groupsHtml}</div>
             <div id="noresult" class="empty" hidden></div>
-            ${libArchived ? `<button class="archivedlink" id="back-active">← Active skills</button>` : archived.length ? `<button class="archivedlink" data-go="archived">Archived skills (${archived.length}) →</button>` : ""}
+            ${cross}
           </main>
         </div>`;
   $("#search").addEventListener("input", (e) => {
     searchQ = e.target.value;
-    filterLibrary();
+    // The map has no DOM rows to hide: search re-paints it instead.
+    if (libView === "map") paintMap();
+    else filterLibrary();
   });
+  if (libView === "map") mountMap();
   $("#back-active")?.addEventListener("click", () => {
-    libArchived = false;
+    setLibArchived(false);
     go("skills");
   });
   if ($("#syncnow")) $("#syncnow").addEventListener("click", doSaveSync);
   if ($("#syncdismiss"))
     $("#syncdismiss").addEventListener("click", () => {
       syncBannerDismissed = true;
-      renderLibrary();
+      repaintLibrary();
     });
   $("#librail").addEventListener("click", (e) => {
     const g = e.target.closest("#groupby button");
     if (g) {
-      groupAxis = g.dataset.axis;
-      renderLibrary();
+      setGroupAxis(g.dataset.axis);
+      repaintLibrary();
+      return;
+    }
+    if (e.target.closest("#mentoggle")) {
+      mapMentions = !mapMentions;
+      // Same as a lens: it changes what the canvas draws, so it asks for the
+      // canvas back.
+      if (mapPanel) {
+        mapPanel = null;
+        repaintLibrary();
+        return;
+      }
+      $("#librail").innerHTML = renderRailHtml();
+      paintMap();
+      return;
+    }
+    const lensBtn = e.target.closest("[data-lens]");
+    if (lensBtn) {
+      setMapLens(lensBtn.dataset.lens);
       return;
     }
     const b = e.target.closest(".ritem");
     if (!b) return;
     const v = b.dataset.v;
-    if (b.dataset.kind === "domain")
-      domainFilter = domainFilter === v ? null : v;
-    else if (b.dataset.kind === "layer")
-      layerFilter = layerFilter === v ? null : v;
-    else if (b.dataset.kind === "link")
-      linkFilter = linkFilter === v ? null : v;
-    else if (b.dataset.kind === "sync")
-      syncFilter = syncFilter === v ? null : v;
-    else statusFilter = statusFilter === v ? null : v;
+    const kind = b.dataset.kind;
+    if (axisList().some((a) => a.id === kind))
+      axisFilters[kind] = axisFilters[kind] === v ? null : v;
+    else if (kind === "link") linkFilter = linkFilter === v ? null : v;
+    else if (kind === "sync") syncFilter = syncFilter === v ? null : v;
+    else setStatusFilter(statusFilter === v ? null : v);
+    // A filter narrows whatever the view is showing — the map, the rows, or a
+    // finding's list, which is drawn from the same filtered set and so has to
+    // be rebuilt rather than repainted.
+    if (mapPanel) return void repaintLibrary();
     $("#librail").innerHTML = renderRailHtml();
-    filterLibrary();
+    if (libView === "map") paintMap();
+    else filterLibrary();
   });
+
+  // The plot is laid out against a measured width, so it has to be redrawn
+  // when that width changes.
+  if (libView === "map") {
+    let resizeTimer = null;
+    const onResize = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (libView === "map" && $("#mapplot")) paintMap();
+      }, 120);
+    };
+    window.removeEventListener("resize", window.__loomMapResize || (() => {}));
+    window.__loomMapResize = onResize;
+    window.addEventListener("resize", onResize);
+  }
+
+  // The proposals stand in for the map, so they get their own root: a back to
+  // the map, a skill name that takes you there with that skill picked, and a
+  // row that opens its own evidence in place.
+  const propsRoot = $("#propsledger");
+  if (propsRoot)
+    propsRoot.addEventListener("click", (e) => {
+      if (e.target.closest("#props-back")) {
+        mapPanel = null;
+        return repaintLibrary();
+      }
+      const ref = e.target.closest("[data-skillref]");
+      if (ref) {
+        mapPanel = null;
+        mapSel = { t: "s", k: ref.dataset.skillref };
+        return repaintLibrary();
+      }
+      const row = e.target.closest("tr[data-prop]");
+      if (row) row.classList.toggle("open");
+    });
+
+  const mapRoot = $(".maplayout");
+  if (mapRoot)
+    mapRoot.addEventListener("click", (e) => {
+      const open = e.target.closest("[data-open]");
+      if (open) return go("detail", open.dataset.open);
+      // A finding that owns a list opens it in place of the map, which means a
+      // re-render of the view rather than a repaint of the canvas.
+      if (e.target.closest("[data-weak]")) {
+        mapPanel = "weak";
+        mapSel = null;
+        return repaintLibrary();
+      }
+      // Anything picked on the canvas is a request to look at something else,
+      // so it closes whatever panel the column was holding.
+      if (e.target.closest("#mapplot")) mapPanel = null;
+      // The evidence opens where it is: two lines are enough to triage, the
+      // whole paragraph is one click and never moves the panel underneath it.
+      const ev = e.target.closest("[data-expand]");
+      if (ev) return void ev.classList.toggle("clamp");
+      // The canvas states carry their own way out: read the graph again, or
+      // drop the filters that left nothing to draw.
+      if (e.target.closest("#mapretry")) return void mountMap(true);
+      if (e.target.closest("#mapclear")) {
+        clearRailFilters();
+        $("#librail").innerHTML = renderRailHtml();
+        return paintMap();
+      }
+      const lensRow = e.target.closest("[data-lens]");
+      if (lensRow) return setMapLens(lensRow.dataset.lens);
+      const pair = e.target.closest("[data-pair]");
+      if (pair) {
+        const [a, b] = pair.dataset.pair.split("|");
+        mapSel = { t: "e", a, b };
+        return paintMap();
+      }
+      const ment = e.target.closest("[data-ment]");
+      if (ment) {
+        const [a, b] = ment.dataset.ment.split("|");
+        mapMentions = true;
+        mapSel = { t: "m", a, b };
+        $("#librail").innerHTML = renderRailHtml();
+        return paintMap();
+      }
+      const node = e.target.closest(".mnode");
+      if (node) {
+        mapSel = { t: "s", k: node.dataset.mapSkill };
+        return paintMap();
+      }
+      const edge = e.target.closest(".medge");
+      if (edge) {
+        const found = mapEdges()[+edge.dataset.e];
+        mapSel = found ? { t: "e", a: found.a, b: found.b } : null;
+        return paintMap();
+      }
+      const mline = e.target.closest(".mment");
+      if (mline) {
+        const found = mapMentionEdges()[+mline.dataset.m];
+        mapSel = found ? { t: "m", a: found.a, b: found.b } : null;
+        return paintMap();
+      }
+      if (e.target.closest("#mapplot svg")) {
+        mapSel = null;
+        paintMap();
+      }
+    });
   $("#viewtoggle").addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b || b.dataset.view === libView) return;
-    libView = b.dataset.view;
+    setLibView(b.dataset.view);
     if (libView === "grid" && sortMode === "updated") {
       sortMode = "name";
       sortDir = 1;
     }
-    renderLibrary();
+    repaintLibrary();
   });
   const lt = $("#ledger");
   if (lt)
@@ -1213,12 +2581,11 @@ function renderLibrary() {
         sortMode = th.dataset.sort;
         sortDir = 1;
       }
-      renderLibrary();
+      repaintLibrary();
     });
   filterLibrary();
   if (libSelName) libHighlight(libSelName);
   libSelApply();
-  renderSyncNote();
 }
 function filterLibrary() {
   const q = searchQ.trim().toLowerCase();
@@ -1230,12 +2597,14 @@ function filterLibrary() {
       sec.querySelectorAll("[data-skill]").forEach((c) => {
         const okSearch = !q || c.dataset.hay.includes(q);
         const okStatus = !statusFilter || c.dataset.status === statusFilter;
-        const okDomain = !domainFilter || c.dataset.domain === domainFilter;
-        const okLayer = !layerFilter || c.dataset.layer === layerFilter;
+        const okAxes = axisList().every(
+          (a) =>
+            !axisFilters[a.id] ||
+            c.getAttribute("data-" + a.id) === axisFilters[a.id],
+        );
         const okLink = !linkFilter || c.dataset.link === linkFilter;
         const okSync = !syncFilter || c.dataset.sync === syncFilter;
-        const hit =
-          okSearch && okStatus && okDomain && okLayer && okLink && okSync;
+        const hit = okSearch && okStatus && okAxes && okLink && okSync;
         c.hidden = !hit;
         if (hit) vis = true;
       });
@@ -1245,8 +2614,7 @@ function filterLibrary() {
   const filtering = !!(
     q ||
     statusFilter ||
-    domainFilter ||
-    layerFilter ||
+    Object.values(axisFilters).some(Boolean) ||
     linkFilter ||
     syncFilter
   );
@@ -1260,18 +2628,41 @@ function filterLibrary() {
     nr.textContent = filtering ? "No skills match these filters." : "";
   }
 }
-async function renderSyncNote() {
-  sync = (await api("/api/sync")).data;
-  const el = $("#syncnote");
-  if (!el) return;
-  if (!sync.versioned || !sync.remote) {
-    el.textContent = "";
-    return;
-  }
+// Reads the sync state already in hand, like the banner beside it, so the note
+// paints with the rest of the header. Fetching it again after the render left
+// the line empty for a beat, which read as a flash on every refresh.
+function syncNoteHtml() {
+  if (!sync || !sync.versioned || !sync.remote) return "";
   if (sync.dirty === 0 && sync.ahead === 0 && sync.behind === 0)
-    el.innerHTML = "<b>Everything is in sync.</b>";
-  else
-    el.innerHTML = `<a data-go="status" style="color:var(--accent);font-weight:600;cursor:pointer">Changes to sync →</a>`;
+    return "<b>Everything is in sync.</b>";
+  return `<a data-go="status" style="color:var(--accent);font-weight:600;cursor:pointer">Changes to sync →</a>`;
+}
+
+// Hide the rows a query does not match, the way filterLibrary does for the
+// vault: in place, without touching the input. Section bodies whose rows are
+// all hidden go with them, so no empty heading is left behind.
+function filterSources() {
+  const q = searchQ.trim().toLowerCase();
+  const table = $("#srcledger");
+  if (!table) return;
+  let anyVisible = false;
+  table.querySelectorAll("tbody.lgroup").forEach((sec) => {
+    let vis = false;
+    sec.querySelectorAll("tr[data-skill]").forEach((r) => {
+      const hit = !q || (r.dataset.hay || "").includes(q);
+      r.hidden = !hit;
+      if (hit) vis = true;
+    });
+    sec.hidden = !vis;
+    if (vis) anyVisible = true;
+  });
+  const scroll = table.closest(".tscroll");
+  if (scroll) scroll.hidden = !!q && !anyVisible;
+  const nr = $("#srcnoresult");
+  if (nr) {
+    nr.hidden = anyVisible || !q;
+    nr.textContent = q ? "No skills match this search." : "";
+  }
 }
 
 /* ---------- detail (three-pane) ---------- */
@@ -1279,15 +2670,730 @@ async function renderSyncNote() {
 // detail after visiting Status/Config (cleared on "← Your library").
 let lastDetail = null;
 function goSkillsTab() {
-  libArchived = false; // the My skills tab always lands on active skills
-  if (lastDetail && (state.skills || []).some((s) => s.name === lastDetail))
+  // The archive and the remembered detail are Personal's own state (lastDetail
+  // only ever holds a vault skill), so a source's tab click just lands on its
+  // list — restoring either there would open the wrong thing.
+  if (curSource !== "personal") return void go("skills");
+  // Coming back to My skills restores where you left it: the archive if you
+  // were in it, and the skill you were reading if it is still in that set.
+  const set = libArchived ? state.archived || [] : state.skills || [];
+  if (lastDetail && set.some((s) => s.name === lastDetail))
     go("detail", lastDetail);
-  else go("skills");
+  else go(libArchived ? "archived" : "skills");
 }
+/* ---------- read-only sources (browse pool + plugins) ---------- */
+async function loadSources() {
+  const r = await api("/api/sources");
+  if (r.ok) sources = r.data.sources || [];
+}
+// Source switcher: a full-width band above the two-column layout. Every
+// source is shown in a stable registry order (personal first); selecting one
+// only moves the highlight, never reorders the chips. Wraps to a second row
+// when they don't fit.
+// A runtime source shows its product name, not the dot-directory it lives in:
+// ".claude" is a path, "Claude" is what the user calls it. rtName() already
+// carries the proper-noun map (OpenClaw, OpenCode) and any custom names from
+// the config, so the two places that name a runtime agree.
+function srcLabel(s) {
+  return !s ? "" : s.kind === "runtime" ? rtName(s.id) : s.label;
+}
+function sourceChipsHtml() {
+  if (sources.length < 2) return "";
+  const chip = (s) =>
+    `<button class="srcchip${s.id === curSource ? " on" : ""}" type="button" data-source="${esc(s.id)}">${esc(srcLabel(s))}<span class="n">${s.count}</span></button>`;
+  return `<div class="srcband"><div class="srcchips">${sources.map(chip).join("")}</div></div>`;
+}
+// Split a source's skills into the sections the list renders, keeping the
+// server's alphabetical order for the named collections.
+//
+// What nothing bundled leads. It is the one section with no collection behind
+// it, so it is also the one rendered without a heading: a heading would name a
+// group that is precisely the absence of one.
+//
+// Two things land in it. The server's own (unbundled) group — dirs sitting
+// loose in a runtime's folder, pool skills the lockfile does not claim — and,
+// in the pool only, repos that shipped exactly one skill: there a group is the
+// repo a skill happened to arrive in, which is accidental, and a wall of
+// one-row sections buries the collections that matter. A plugin never collapses
+// — it is the unit you install and remove, so a plugin of one is still a plugin.
+//
+// Collapsing reads the group's real size, never the filtered rows: searching
+// down to a single hit must not turn a real collection into a bucket.
+function srcSections(src, skills) {
+  const groups = (src && src.groups) || [];
+  const collapseSingles = !!src && src.axis === "Source";
+  const byKey = new Map();
+  for (const s of skills || []) {
+    const k = s.group || "";
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(s);
+  }
+  const out = [];
+  const bucket = [];
+  for (const g of groups) {
+    const items = byKey.get(g.key) || [];
+    if (!items.length) continue;
+    const loose = g.key === "(unbundled)" || (collapseSingles && g.count === 1);
+    if (loose) bucket.push.apply(bucket, items);
+    else out.push({ key: g.key, label: g.label, skills: items });
+  }
+  if (bucket.length)
+    out.unshift({
+      key: "(unbundled)",
+      label: "Unbundled",
+      // By name: the groups they were pulled from are not on screen, so their
+      // order would be an accident the reader cannot see.
+      skills: bucket.sort((a, b) => a.name.localeCompare(b.name)),
+    });
+  return out;
+}
+// The display name of the open skill's group. Worth showing on the detail: the
+// runtime alone does not say where a skill came from, and "which plugin ships
+// this" is the first thing you ask while reading it.
+function srcGroupLabel(src) {
+  const g = ((src && src.groups) || []).find((x) => x.key === srcGroup);
+  return g ? g.label : "";
+}
+// A group's tint, rank-based over the source's own groups so the same 8-hue
+// palette that separates the library's taxonomy separates these sections, and
+// the rail facet matches its section header.
+function srcHueStyle(src, key) {
+  const groups = (src && src.groups) || [];
+  const i = groups.findIndex((g) => g.key === key);
+  const hue =
+    i >= 0
+      ? TAX_HUES[(i * 3) % TAX_HUES.length]
+      : TAX_HUES[hueHash(key || "other") % TAX_HUES.length];
+  return tintVars(hue);
+}
+// The sections a rail filter leaves visible. Filtering runs on sections, not on
+// each skill's own group: a collapsed bucket's rows still carry the real repo
+// they came from, so matching skill.group against the filter would never find
+// them.
+function srcVisibleSections(src, skills, filter) {
+  const secs = srcSections(src, skills);
+  return filter ? secs.filter((s) => s.key === filter) : secs;
+}
+function mono(name) {
+  return esc((String(name).match(/[a-z0-9]/i) || ["?"])[0].toUpperCase());
+}
+function selectSource(id) {
+  curSource = id;
+  // Each source declares its own axes, so each keeps its own grouping — and
+  // its own mode and status filter: a source read as a table is not the one
+  // read as a map, and a status one holds another may not.
+  loadGroupAxis();
+  loadLibView();
+  loadStatusFilter();
+  searchQ = "";
+  current = null;
+  srcCursor = null;
+  srcGroup = "";
+  srcGrouped = true;
+  srcFilter = "";
+  // Personal remembers whether you were reading the archive. A source has no
+  // archive of its own, so the flag just rides along until you come back.
+  go(id === "personal" && libArchived ? "archived" : "skills");
+}
+// Source-list arrow navigation: one highlighted row (reusing the ledger's
+// .sel styling), scrolled into view; Enter opens it.
+function srcListRows() {
+  return [...document.querySelectorAll("#srcledger tr[data-skill]")].filter(
+    (r) => !r.hidden && r.offsetParent !== null,
+  );
+}
+// A row is identified by group AND name: the same name can sit in two groups,
+// so matching on the name alone would highlight both.
+function srcSameRow(row, cur) {
+  return (
+    !!cur && row.dataset.skill === cur.name && row.dataset.group === cur.group
+  );
+}
+function srcHighlight(cur) {
+  srcCursor = cur;
+  const rows = [...document.querySelectorAll("#srcledger tr[data-skill]")];
+  rows.forEach((r) => r.classList.toggle("sel", srcSameRow(r, cur)));
+  rows
+    .find((r) => srcSameRow(r, cur))
+    ?.scrollIntoView({
+      block: "nearest",
+    });
+}
+function srcRowKey(row) {
+  return { name: row.dataset.skill, group: row.dataset.group || "" };
+}
+function srcListNav(key) {
+  // One column: only Up/Down move in it, and a sideways key never conjures a
+  // cursor onto the first row.
+  if (key !== "ArrowUp" && key !== "ArrowDown") return false;
+  const rows = srcListRows();
+  if (!rows.length) return false;
+  const idx = rows.findIndex((r) => srcSameRow(r, srcCursor));
+  const step = key === "ArrowUp" ? -1 : 1;
+  const ni = idx < 0 ? 0 : Math.min(rows.length - 1, Math.max(0, idx + step));
+  srcHighlight(srcRowKey(rows[ni]));
+  return true;
+}
+async function renderSourceLibrary(seq) {
+  const src = sources.find((s) => s.id === curSource);
+  const r = await api(
+    `/api/source-skills?src=${encodeURIComponent(curSource)}`,
+  );
+  if (!navCurrent(seq)) return;
+  const all = (r.ok && r.data.skills) || [];
+  // Every row is rendered; the query hides them in place (filterSources).
+  // Filtering at render time meant every keystroke rebuilt the view — and the
+  // search input with it, so the field lost focus after one character and the
+  // rest of the word went to the global shortcuts.
+  const row = (s) =>
+    `<tr data-skill="${esc(s.name)}" data-group="${esc(s.group || "")}" data-hay="${esc(
+      `${s.title || s.name} ${s.name} ${s.description || ""}`.toLowerCase(),
+    )}"><td><span class="lname">${skillTile(s)}${esc(s.title || s.name)}</span></td><td class="ldesc">${esc(s.description || "")}</td><td class="lwhen">${esc(fmtWhen(s.modified))}</td></tr>`;
+  const secs = srcVisibleSections(src, all, srcFilter);
+  // Grouped: one tbody per section, headed like the library's. Ungrouped: one
+  // flat alphabetical run, for when you know the name and not the batch. Both
+  // read the same filtered sections, so a facet narrows either view.
+  const rows = srcGrouped
+    ? secs
+        .map((sec) => {
+          // The unbundled lead the list bare: a heading there would name the
+          // one section that has no collection to name.
+          const head =
+            sec.key === "(unbundled)"
+              ? ""
+              : `<tr class="lsec"><td colspan="3"><span class="lsechead" style="${srcHueStyle(src, sec.key)}"><span class="catdot"></span><h2>${esc(sec.label)}</h2><span class="n">${sec.skills.length} skill${sec.skills.length === 1 ? "" : "s"}</span></span></td></tr>`;
+          return `<tbody class="lgroup">${head}${sec.skills.map(row).join("")}</tbody>`;
+        })
+        .join("")
+    : `<tbody class="lgroup">${secs
+        .flatMap((sec) => sec.skills)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(row)
+        .join("")}</tbody>`;
+  const label = src ? srcLabel(src) : curSource;
+  const chips = sourceChipsHtml();
+  // Facets filter, so they ride above the grouping and show in both modes: you
+  // narrow to one plugin whether or not you want the list split by plugin.
+  // Counts come from the unfiltered set, so they stay put as you click. A source
+  // with no axis (just its own natives) has nothing to offer.
+  const facets = srcSections(src, all)
+    .map(
+      (sec) =>
+        `<button class="ritem${srcFilter === sec.key ? " on" : ""}" data-facet="${esc(sec.key)}" style="${srcHueStyle(src, sec.key)}" type="button"><span class="d"></span>${esc(sec.label)}<span class="n">${sec.skills.length}</span></button>`,
+    )
+    .join("");
+  const groupBy =
+    src && src.axis
+      ? `<div class="rl">Group by</div><div class="seg" id="srcgroupby"><button data-grouped="0"${srcGrouped ? "" : ' class="on"'} type="button">None</button><button data-grouped="1"${srcGrouped ? ' class="on"' : ""} type="button">${esc(src.axis)}</button></div>` +
+        `<div class="rl">${esc(src.axis)}</div>${facets}`
+      : "";
+  setFixed(true);
+  app().innerHTML = `<div class="liblayout${chips ? " hasband" : ""}">
+    ${chips}
+    <aside class="librail">${groupBy}</aside>
+    <main class="libmain">
+      <div class="libhead"><div><h1 class="view">${esc(label)}</h1><p class="sub">${secs.reduce((n, s) => n + s.skills.length, 0)} of ${all.length} skill${all.length === 1 ? "" : "s"} · read-only. Open one to read its SKILL.md.</p></div></div>
+      <div class="srobanner">Read-only source: no status, links, sync or editing here. This is a reference, not part of your vault.</div>
+      <div class="libbar"><div class="search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5.2" stroke="currentColor" stroke-width="1.5"/><path d="M11 11l3.4 3.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><input id="search" placeholder="Search ${esc(label)}…" value="${esc(searchQ)}" /></div></div>
+      <div class="tscroll"><table class="ledger" id="srcledger"><thead><tr><th style="width:22%">Skill</th><th>Description</th><th style="width:11%">Updated</th></tr></thead>${rows}</table></div>
+      <div id="srcnoresult" class="empty" hidden></div>
+    </main></div>`;
+  const inp = $("#search");
+  if (inp)
+    inp.addEventListener("input", (e) => {
+      searchQ = e.target.value;
+      filterSources();
+    });
+  // A facet click or a grouping switch re-renders: re-apply the query so the
+  // list agrees with the field that is still holding it.
+  filterSources();
+  document.querySelectorAll("#srcgroupby button").forEach((b) =>
+    b.addEventListener("click", () => {
+      srcGrouped = b.dataset.grouped === "1";
+      render();
+    }),
+  );
+  // Clicking the facet you are already on clears it, so the rail is its own way
+  // out — the same toggle the library's rail has. The cursor drops: the row it
+  // pointed at may not be in the list any more.
+  document.querySelectorAll(".librail [data-facet]").forEach((b) =>
+    b.addEventListener("click", () => {
+      srcFilter = srcFilter === b.dataset.facet ? "" : b.dataset.facet;
+      srcCursor = null;
+      render();
+    }),
+  );
+  if (srcCursor) srcHighlight(srcCursor);
+}
+// The rail's file list, shared by the vault detail and a read-only source.
+// SKILL.md leads, the skill's other root files follow, then one group per
+// folder — root files must NOT trail the groups or they read as part of the
+// last one. Group headers carry the real leaf-folder path ("assets / css"), so
+// a nested folder reads honestly instead of collapsing into its top segment.
+// `attr` is the data attribute the click handler reads, the only thing the two
+// callers differ on. The gallery is NOT in here: it takes its own section above
+// this one, see galleryPanelHtml.
+function filePanelHtml(files, attr) {
+  const row = (p) =>
+    `<div class="file${p === (currentFile || "SKILL.md") ? " sel" : ""}" data-${attr}="${esc(p)}" title="${esc(p)}"><span class="fic">${fileIcon(p)}</span><span class="fname">${esc(p.slice(p.lastIndexOf("/") + 1))}</span></div>`;
+  const all = files || [];
+  const dirs = {};
+  all
+    .filter((f) => f.path.includes("/"))
+    .forEach((f) => {
+      const dn = f.path.slice(0, f.path.lastIndexOf("/"));
+      (dirs[dn] = dirs[dn] || []).push(f);
+    });
+  let html = all
+    .filter((f) => f.path === "SKILL.md")
+    .map((f) => row(f.path))
+    .join("");
+  html += all
+    .filter((f) => !f.path.includes("/") && f.path !== "SKILL.md")
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .map((f) => row(f.path))
+    .join("");
+  const shown = [];
+  Object.keys(dirs)
+    .sort()
+    .forEach((dn) => {
+      html += `<div class="flabel" title="${esc(dn)}">${esc(compactDirLabel(dn, shown))}</div>`;
+      shown.push(dn);
+      dirs[dn]
+        .sort((a, b) => a.path.localeCompare(b.path))
+        .forEach((f) => (html += row(f.path)));
+    });
+  return html;
+}
+// A folder heading in a 240px rail, against a vault that nests three deep:
+// "assets / profile-photos / ai-generated" wraps to two lines and spends both
+// of them on a parent the heading above already spelled out. So a heading drops
+// that parent and keeps a leading slash in its place — `/ ai-generated` under
+// `assets / profile-photos`, spaced like the separators inside a path so the
+// two sit on one rhythm.
+//
+// The slash stands for a parent ALREADY WRITTEN OUT above, never for one merely
+// shared. `assets/profile-photos` following `assets/avatar-rings` shares
+// "assets" with it, but no heading ever said "assets" on its own, so eliding it
+// left `/ profile-photos` reading as a child of avatar-rings — a sibling
+// wearing the mark of a descendant. It is written in full instead, and only a
+// real descendant of a heading above it is shortened.
+//
+// The whole path is still there on hover, and sorting still reads it: what is
+// shortened is the label, never the value.
+function compactDirLabel(dir, shown) {
+  // Sorted headings put an ancestor before its descendants, so the deepest
+  // match is the nearest one — and boundary-checked, since "assets/profile"
+  // is not a parent of "assets/profile-photos".
+  let parent = "";
+  for (const prev of shown || [])
+    if (dir.startsWith(prev + "/") && prev.length > parent.length)
+      parent = prev;
+  const tail = dir
+    .slice(parent ? parent.length + 1 : 0)
+    .split("/")
+    .join(" / ");
+  return parent ? `/ ${tail}` : tail;
+}
+// A skill whose assets are pictures cannot be read one file at a time: the rail
+// lists forty filenames that all describe the same face, and telling them apart
+// means opening each one. The gallery is that folder shown as what it is.
+//
+// It is a view of the skill, not a file in it, so it sits above SKILL.md in the
+// rail and takes `currentFile` under a key no path can equal — the rail marks
+// it selected while no file row is, and the viewer bar names it.
+const GALLERY_KEY = " gallery";
+// Below two images there is nothing to compare: the grid would be the file
+// itself, one click further away.
+const GALLERY_MIN = 2;
+function imagesOf(files) {
+  return (files || []).filter((f) => f.kind === "image");
+}
+// One row, above the Files heading rather than inside the list under it. That
+// heading is the separation: everything under it is a file, and the row that
+// sits before it is not one. A heading of its own over a single row, and a rule
+// under it, were both saying the same thing a third time.
+function galleryPanelHtml(files) {
+  const n = imagesOf(files).length;
+  if (n < GALLERY_MIN) return "";
+  return `<div class="file${currentFile === GALLERY_KEY ? " sel" : ""}" id="gal-entry" data-gallery="1" title="Every image in this skill, ${n} in all"><span class="fic">${GALLERY_IC}</span><span class="fname">Gallery</span><span class="sz">${n}</span></div>`;
+}
+// One section per folder, in the rail's own order: root images first, then the
+// folders alphabetically. The folder path is the heading — a skill that keeps
+// finals beside a candidates/ archive is two different sets, and a flat grid of
+// both says they are one.
+function galleryGroups(files) {
+  const dirs = new Map();
+  for (const f of imagesOf(files)) {
+    const dn = f.path.includes("/")
+      ? f.path.slice(0, f.path.lastIndexOf("/"))
+      : "";
+    if (!dirs.has(dn)) dirs.set(dn, []);
+    dirs.get(dn).push(f);
+  }
+  return [...dirs.keys()]
+    .sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)))
+    .map((dir) => ({
+      dir,
+      items: dirs.get(dir).sort((a, b) => a.path.localeCompare(b.path)),
+    }));
+}
+// Reading order: what the grid shows, top to bottom. The arrows in the
+// lightbox walk this and not the raw listing, which sorts a folder's contents
+// before a sibling file that shares its prefix and would step somewhere the
+// eye did not.
+function galleryOrder(files) {
+  return galleryGroups(files).flatMap((g) => g.items.map((f) => f.path));
+}
+function galleryHtml(files, rawUrl) {
+  const groups = galleryGroups(files);
+  // A single group needs no heading: the skill's own name above already says
+  // whose images these are, and one label over one grid is a label for nothing.
+  const labelled = groups.length > 1;
+  return groups
+    .map(({ dir, items }) => {
+      const tiles = items
+        .map(
+          (f) =>
+            `<button class="galtile" type="button" data-galfile="${esc(f.path)}" title="${esc(f.path)} · ${fmtSize(f.size)}"><span class="galimg${/\.svg$/i.test(f.path) ? " vec" : ""}"><img src="${esc(rawUrl(f.path))}" alt="" loading="lazy" decoding="async"></span><span class="galname">${esc(f.path.slice(f.path.lastIndexOf("/") + 1))}</span></button>`,
+        )
+        .join("");
+      const head = labelled
+        ? `<div class="galhead"><span class="galdir">${dir ? esc(dir.split("/").join(" / ")) : "root"}</span><span class="galn">${items.length} image${items.length === 1 ? "" : "s"}</span></div>`
+        : "";
+      return `<section class="galsec">${head}<div class="galgrid">${tiles}</div></section>`;
+    })
+    .join("");
+}
+// Where the bytes of one image come from, for whichever skill is open. The two
+// detail views read different endpoints; everything else about the gallery is
+// the same, so this is the only place that knows which.
+function galleryRawUrl(p) {
+  const q = `path=${encodeURIComponent(p)}`;
+  return curSource === "personal"
+    ? `/api/file-raw?name=${encodeURIComponent(current)}&${q}`
+    : `/api/source-file-raw?src=${encodeURIComponent(curSource)}&group=${encodeURIComponent(srcGroup)}&name=${encodeURIComponent(srcSkill ? srcSkill.name : "")}&${q}`;
+}
+// The files the gallery is drawn from, for whichever detail is open.
+function galleryFiles() {
+  return curSource === "personal"
+    ? curFiles
+    : (srcSkill && srcSkill.files) || [];
+}
+function openGallery() {
+  const isSrc = curSource !== "personal";
+  const files = galleryFiles();
+  const listSel = isSrc ? "#srcfilelist" : "#filelist";
+  currentFile = GALLERY_KEY;
+  currentFileData = null;
+  document
+    .querySelectorAll(`${listSel} .file`)
+    .forEach((b) => b.classList.remove("sel"));
+  $("#gal-entry")?.classList.add("sel");
+  const fn = $("#fname");
+  if (fn) fn.textContent = "Gallery";
+  const vb = $("#viewerbar");
+  if (vb) vb.hidden = false;
+  // Neither control has a subject here: there is no Markdown to switch modes
+  // on, and the file export hands over one file, not a folder.
+  $("#seg")?.classList.add("vhide");
+  const xb = $("#v-export");
+  if (xb) xb.hidden = true;
+  const viewer = $("#viewer");
+  if (!viewer) return;
+  viewer.innerHTML = galleryHtml(files, galleryRawUrl);
+  // A thumbnail that will not load must say so where it sits: an empty tile in
+  // a grid of faces reads as a missing asset, which is a different problem.
+  viewer.querySelectorAll(".galtile img").forEach((img) => {
+    img.onerror = () => {
+      const box = img.parentElement;
+      box.classList.add("bad");
+      box.textContent = "unreadable";
+    };
+  });
+  // The history rail belongs to the vault detail, and the gallery is the whole
+  // skill rather than one file in it.
+  if (!isSrc) renderHistory(current);
+  scrollViewerTop();
+}
+
+/* ---------- lightbox ---------- */
+// A tile does not open the file. Looking through photographs is a different act
+// from reading a file: you compare them, one after another, at a size worth
+// looking at. So the grid opens the picture over the page, and the next one is
+// an arrow key away rather than a trip back to the grid and out again. The file
+// is still one click down — the export button here hands over the same bytes
+// the viewer's own export would.
+let lbAt = 0;
+let lbPaths = [];
+let lbReturn = null;
+function lightboxDownloadUrl(p) {
+  const q = `path=${encodeURIComponent(p)}`;
+  return curSource === "personal"
+    ? `/api/file-download?name=${encodeURIComponent(current)}&${q}`
+    : `/api/source-file-download?src=${encodeURIComponent(curSource)}&group=${encodeURIComponent(srcGroup)}&name=${encodeURIComponent(srcSkill ? srcSkill.name : "")}&${q}`;
+}
+const LB_HTML = `<div class="lbbar"><span class="lbname" id="lb-name"></span><span class="lbcount" id="lb-count"></span><span class="lbacts"><button class="lbbtn" id="lb-dl" type="button" title="Export this file" aria-label="Export this file"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg></button><button class="lbbtn" id="lb-close" type="button" title="Close" aria-label="Close"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span></div><div class="lbstage"><button class="lbnav" id="lb-prev" type="button" aria-label="Previous image"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><span class="lbpic" id="lb-pic"></span><button class="lbnav" id="lb-next" type="button" aria-label="Next image"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button></div>`;
+function lbRoot() {
+  let el = $("#lightbox");
+  if (el) return el;
+  el = document.createElement("div");
+  el.id = "lightbox";
+  el.className = "lightbox";
+  // Focusable as a container so focus can leave the page behind without
+  // landing on a control; announced as a dialog for the same reason.
+  el.tabIndex = -1;
+  el.setAttribute("role", "dialog");
+  el.setAttribute("aria-modal", "true");
+  el.setAttribute("aria-label", "Image viewer");
+  el.hidden = true;
+  el.innerHTML = LB_HTML;
+  document.body.appendChild(el);
+  // Wired once for the page: the box outlives every detail render.
+  el.addEventListener("click", (e) => {
+    if (e.target.closest("#lb-prev")) return lbShow(lbAt - 1);
+    if (e.target.closest("#lb-next")) return lbShow(lbAt + 1);
+    if (e.target.closest("#lb-dl"))
+      return void window.location.assign(lightboxDownloadUrl(lbPaths[lbAt]));
+    // The backdrop closes: it is the way out reached for first, and the button
+    // is for the one who looks for it. The top bar is exempt — a click that
+    // lands on the filename while reading it is not a request to leave.
+    if (e.target.closest("#lb-close") || !e.target.closest("img,button,.lbbar"))
+      lbClose();
+  });
+  return el;
+}
+function openLightbox(paths, i) {
+  lbPaths = paths;
+  lbReturn = document.activeElement;
+  const el = lbRoot();
+  el.hidden = false;
+  document.body.classList.add("lbopen");
+  lbShow(i);
+  // Focus the box, not the close button: focus has to leave the page behind so
+  // Tab and the reader land here, but parking it on Close painted a focus ring
+  // on the X that then sat there through every arrow press, as if the next
+  // keystroke would shut the picture.
+  el.focus();
+}
+function lbShow(i) {
+  if (!lbPaths.length) return;
+  lbAt = (i + lbPaths.length) % lbPaths.length;
+  const p = lbPaths[lbAt];
+  // The picture is written into its slot rather than kept in the shell with a
+  // src that is swapped: a tag with no source is a broken-image box for as long
+  // as the box is empty, and the previous photograph must not stand in for the
+  // one being asked for while it loads.
+  const pic = $("#lb-pic");
+  if (pic) {
+    pic.innerHTML = `<img src="${esc(galleryRawUrl(p))}" alt="${esc(p.slice(p.lastIndexOf("/") + 1))}">`;
+    const img = pic.firstElementChild;
+    img.onerror = () => {
+      pic.textContent = "Image not readable";
+      pic.classList.add("bad");
+    };
+    pic.classList.remove("bad");
+  }
+  const nm = $("#lb-name");
+  if (nm) nm.textContent = p;
+  const ct = $("#lb-count");
+  if (ct) ct.textContent = `${lbAt + 1} / ${lbPaths.length}`;
+}
+function lbClose() {
+  const el = $("#lightbox");
+  if (!el || el.hidden) return;
+  el.hidden = true;
+  document.body.classList.remove("lbopen");
+  // The picture is dropped rather than left loaded: the next open would show
+  // the previous photograph for as long as the new one takes to arrive.
+  const pic = $("#lb-pic");
+  if (pic) pic.innerHTML = "";
+  if (lbReturn && document.contains(lbReturn)) lbReturn.focus();
+  lbReturn = null;
+}
+function lbIsOpen() {
+  const el = $("#lightbox");
+  return !!el && !el.hidden;
+}
+// Capture phase, ahead of the pane and view handlers: with the picture open,
+// Escape means "close the picture" and nothing else, and the arrows walk the
+// photographs rather than the file list underneath them.
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if (!lbIsOpen()) return;
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      e.preventDefault();
+      lbClose();
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.stopPropagation();
+      e.preventDefault();
+      lbShow(lbAt + (e.key === "ArrowLeft" ? -1 : 1));
+    }
+  },
+  true,
+);
+async function renderSourceDetail(name, seq) {
+  const src = sources.find((s) => s.id === curSource);
+  // Fetch the skill and its source's full skill list together, so the rail
+  // can offer the same file + sibling-skill navigation the vault detail has.
+  const [r, lr] = await Promise.all([
+    api(
+      `/api/source-skill?src=${encodeURIComponent(curSource)}&group=${encodeURIComponent(srcGroup)}&name=${encodeURIComponent(name)}`,
+    ),
+    api(`/api/source-skills?src=${encodeURIComponent(curSource)}`),
+  ]);
+  if (!navCurrent(seq)) return;
+  if (!r.ok) return void toast(r.data.error || "not found");
+  srcSkill = r.data;
+  currentFile = "SKILL.md";
+  // Track the open skill as the list cursor, so returning to the list (Esc)
+  // lands on the skill you were last reading, not the one you first opened.
+  srcCursor = { name, group: srcGroup };
+  const title = srcSkill.title || name;
+  const sibs = ((lr.ok && lr.data.skills) || [])
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const panel = filePanelHtml(srcSkill.files, "srcfile");
+  // Same rule as the vault's detail rail: the siblings are the ones the list
+  // you came from is showing — the active facet applies, and while the list is
+  // grouped the rail stays inside the collection you opened. The heading names
+  // that collection, so a hundred-skill source never lands here whole.
+  const sibRow = (s) =>
+    `<div class="file plain${s.name === name && (s.group || "") === srcGroup ? " sel" : ""}" data-skill="${esc(s.name)}" data-group="${esc(s.group || "")}">${railIcon(s)}<span>${esc(s.title || s.name)}</span></div>`;
+  // Group by the section the list puts a skill in, not by its raw group: on a
+  // source keyed by Source, srcSections folds every single-skill collection
+  // into Unbundled, so filtering on s.group gave one rail per skill ("Unbundled
+  // · 1") while the list showed them together.
+  const sibSecs = srcVisibleSections(src, sibs, srcFilter);
+  const curSec = sibSecs.find((sec) =>
+    sec.skills.some((s) => s.name === name && (s.group || "") === srcGroup),
+  );
+  const sibSet =
+    srcGrouped && curSec ? curSec.skills : sibSecs.flatMap((sec) => sec.skills);
+  const sibCat =
+    (srcGrouped && curSec && curSec.label) || (src ? srcLabel(src) : "Skills");
+  srcOrder = sibSecs.flatMap((sec) =>
+    sec.skills.map((s) => ({ name: s.name, group: s.group || "" })),
+  );
+  const sibHtml = sibSet.length
+    ? `<div class="railbottom"><p class="railh nav">${esc(sibCat)} · ${sibSet.length}</p>${sibSet.map(sibRow).join("")}</div>`
+    : "";
+  setFixed(true);
+  navStop();
+  app().innerHTML = `<div class="layout srclayout">
+    <aside class="rail">
+      <button class="crumb" data-source="${esc(curSource)}">← ${esc(src ? srcLabel(src) : "Source")}</button>
+      <div class="railtop">${galleryPanelHtml(srcSkill.files)}<p class="railh">Files</p><div id="srcfilelist">${panel}</div></div>
+      ${sibHtml}
+    </aside>
+    <main class="doc review">
+      <div class="dochead"><button class="panebtn files" id="pane-files" aria-expanded="false" aria-controls="srcfilelist">Files</button><span class="tile mono">${mono(name)}</span><h1>${esc(title)}</h1><span class="badge off">${esc(srcGroupLabel(src) || (src ? srcLabel(src) : "read-only"))}</span></div>
+      <div class="descmeta"><span>Read-only · from ${esc([srcGroupLabel(src), src ? srcLabel(src) : "another source"].filter(Boolean).join(" · "))} · not part of your vault</span></div>
+      ${srcSkill.description ? `<p class="desc">${esc(srcSkill.description)}</p>` : ""}
+      <div class="viewerbar" id="viewerbar"><span class="fname" id="fname"></span><span class="seg vhide" id="seg"><b data-mode="rendered">Rendered</b><span data-mode="source">Source</span></span>${FILE_EXPORT_BTN}</div>
+      <div id="viewer"></div>
+    </main></div>`;
+  document
+    .querySelectorAll("#srcfilelist .file[data-srcfile]")
+    .forEach((b) =>
+      b.addEventListener("click", () => srcSelectFile(b.dataset.srcfile)),
+    );
+  // The read-only source detail is two panes, but its rail goes off-canvas at
+  // the same breakpoint as the vault detail's — without this the file list
+  // slides away below 820px with nothing left to call it back.
+  wireDetailPanes();
+  document
+    .querySelector(".railbottom .file.plain.sel")
+    ?.scrollIntoView({ block: "nearest" });
+  srcSelectFile("SKILL.md");
+}
+function srcSelectFile(p) {
+  const qs = `src=${encodeURIComponent(curSource)}&group=${encodeURIComponent(srcGroup)}&name=${encodeURIComponent(srcSkill.name)}&path=${encodeURIComponent(p)}`;
+  return showFile(
+    p,
+    "#srcfilelist",
+    "srcfile",
+    `/api/source-file?${qs}`,
+    `/api/source-file-download?${qs}`,
+  );
+}
+// Below 1100px the three-pane detail cannot hold three panes: at 860 the
+// document column measured 300px, a 35-character line. The two rails become
+// overlays you call up instead, so the document keeps the width. Above the
+// breakpoint the buttons are display:none and this is dead weight.
+function wireDetailPanes() {
+  const layout = document.querySelector(".layout");
+  if (!layout) return;
+  const close = () => {
+    layout.classList.remove("show-files", "show-meta");
+    for (const b of layout.querySelectorAll(".panebtn"))
+      b.setAttribute("aria-expanded", "false");
+  };
+  const toggle = (cls, btn) => {
+    const on = layout.classList.contains(cls);
+    close();
+    if (!on) {
+      layout.classList.add(cls);
+      btn.setAttribute("aria-expanded", "true");
+    }
+  };
+  const files = $("#pane-files");
+  const meta = $("#pane-meta");
+  files?.addEventListener("click", () => toggle("show-files", files));
+  meta?.addEventListener("click", () => toggle("show-meta", meta));
+  // A click on the veiled document puts the pane away — the gesture the veil
+  // is there to advertise.
+  layout.addEventListener("click", (e) => {
+    if (
+      (layout.classList.contains("show-files") ||
+        layout.classList.contains("show-meta")) &&
+      e.target.closest(".doc") &&
+      !e.target.closest(".panebtn")
+    )
+      close();
+  });
+  // Escape is already bound globally to "leave this view". With a pane open it
+  // has to mean "close the pane" and stop there — otherwise one keystroke both
+  // shuts the overlay and throws you back to the library. Capture phase so this
+  // runs before the global handler, and the listener is registered once for the
+  // page rather than on every detail render, which would stack a new one per
+  // skill opened.
+  detailPaneEsc = close;
+}
+let detailPaneEsc = null;
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if (e.key !== "Escape" || !detailPaneEsc) return;
+    const layout = document.querySelector(".layout");
+    if (
+      !layout ||
+      !(
+        layout.classList.contains("show-files") ||
+        layout.classList.contains("show-meta")
+      )
+    )
+      return;
+    e.stopPropagation();
+    e.preventDefault();
+    detailPaneEsc();
+  },
+  true,
+);
 async function renderDetail(name, seq) {
   current = name;
   lastDetail = name;
-  libSelName = name;
+  // The cursor follows the skill you are reading only if there already was one:
+  // it belongs to keyboard navigation, so leaving the detail lands where the
+  // arrows were. Opening a row with the mouse starts from no cursor and leaves
+  // none behind — a click is not a selection.
+  if (libSelName) {
+    libSelName = name;
+    libSel = new Set([name]);
+    libSelAnchor = name;
+  }
   const r = await api(`/api/skill?name=${encodeURIComponent(name)}`);
   if (!navCurrent(seq)) return; // a newer navigation won the race
   if (!r.ok) {
@@ -1316,38 +3422,8 @@ async function renderDetail(name, seq) {
           (groupAxis === "none" || groupKeyOf(s) === groupKey)),
     )
     .sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
-  const fileRow = (f, ind) => {
-    const nm = f.path.slice(f.path.lastIndexOf("/") + 1);
-    const sel = f.path === (currentFile || "SKILL.md") ? " sel" : "";
-    return `<div class="file${sel}" data-file="${esc(f.path)}" title="${esc(f.path)}"><span class="fic">${fileIcon(f.path)}</span><span class="fname">${esc(nm)}</span></div>`;
-  };
-  const _guide = d.files.filter((f) => f.path === "SKILL.md");
-  const _rest = d.files.filter((f) => f.path !== "SKILL.md");
-  const _dirs = {};
-  _rest
-    .filter((f) => f.path.includes("/"))
-    .forEach((f) => {
-      const dn = f.path.slice(0, f.path.indexOf("/"));
-      (_dirs[dn] = _dirs[dn] || []).push(f);
-    });
-  const _roots = _rest
-    .filter((f) => !f.path.includes("/"))
-    .sort((a, b) => a.path.localeCompare(b.path));
-  // Root files (SKILL.md + any loose files like requirements.txt) live
-  // together under the "Files" header; folder groups follow. Root files
-  // must NOT trail the folder groups or they read as part of the last one.
-  let filesHtml = _guide.map((f) => fileRow(f, false)).join("");
-  filesHtml += _roots.map((f) => fileRow(f, false)).join("");
-  Object.keys(_dirs)
-    .sort()
-    .forEach((dn) => {
-      filesHtml += `<div class="flabel">${esc(dn)}</div>`;
-      _dirs[dn]
-        .sort((a, b) => a.path.localeCompare(b.path))
-        .forEach((f) => {
-          filesHtml += fileRow(f, true);
-        });
-    });
+  curFiles = d.files || [];
+  const filesHtml = filePanelHtml(d.files, "file");
   const sibHtml = siblings.length
     ? `<div class="railbottom"><p class="railh nav">${esc(cat)} · ${siblings.length}</p>${siblings.map((s) => `<div class="file plain${s.name === name ? " sel" : ""}" data-skill="${esc(s.name)}">${railIcon(s)}<span>${esc(s.title)}</span></div>`).join("")}</div>`
     : "";
@@ -1372,6 +3448,15 @@ async function renderDetail(name, seq) {
           } else if (isInplace) {
             attrs =
               'disabled title="served in place — read straight from the vault, no link to toggle"';
+          } else if (st.state === "external") {
+            // Declared as the runtime's own in loom.local.json. There is
+            // nothing to switch: flipping it on would write over a folder that
+            // was deliberately put outside the vault's reach.
+            attrs =
+              'disabled title="external — this runtime keeps its own skill by this name (loom.local.json)"';
+          } else if (st.state === "disabled") {
+            attrs =
+              'disabled title="disabled — this runtime is meant not to see this skill (loom.local.json)"';
           } else {
             attrs = `data-toggle="${esc(st.consumer)}" title="${st.state}"`;
           }
@@ -1389,12 +3474,21 @@ async function renderDetail(name, seq) {
           return rtRow(c, isInplace, `disabled title="${title}"`);
         })
         .join("");
+  // "Link all" shortcut: shown only when the skill is projectable
+  // (active/draft) and not already linked on every runtime.
+  const projectable =
+    (summary.status ?? "active") === "active" || summary.status === "draft";
+  const linkAllBtn =
+    !arch && projectable && summary.health !== "active"
+      ? `<button class="linkall" id="d-linkall" title="Link this skill into every runtime it is not on yet">Link all</button>`
+      : "";
   setFixed(true);
   navStop();
   app().innerHTML = `<div class="layout">
           <aside class="rail">
             <button class="crumb" data-go="skills">← Your library</button>
             <div class="railtop">
+              ${galleryPanelHtml(d.files)}
               <p class="railh">Files</p>
               <div id="filelist">${filesHtml}</div>
             </div>
@@ -1402,21 +3496,22 @@ async function renderDetail(name, seq) {
           </aside>
           <main class="doc review">
             <div class="dochead">
+              <button class="panebtn files" id="pane-files" aria-expanded="false" aria-controls="filelist">Files</button>
               ${skillTile(summary)}
               <h1>${esc(summary.title || d.name)}</h1>
-              ${arch ? '<span class="badge off">Archived</span>' : healthBadge(summary.health || "inactive", summary.health === "active" ? "Active everywhere" : undefined)}
-              <span class="acts">${arch ? '<button class="btn primary" id="d-restore">Restore</button>' : '<button class="btn" id="d-rename">Rename</button><button class="btn danger" id="d-archive">Archive</button>'}</span>
+              ${arch ? '<span class="badge off">Archived</span>' : healthBadge(summary.health || "inactive", summary.health === "active" ? "All linked" : undefined)}
+              <span class="acts"><button class="btn" id="d-export">Export</button>${arch ? '<button class="btn primary" id="d-restore">Restore</button>' : ""}<button class="panebtn meta" id="pane-meta" aria-expanded="false" aria-controls="metapane">Runtimes</button></span>
             </div>
             <div class="descmeta"><span>updated ${esc(fmtWhen(summary.modified || ""))}</span></div>
             ${arch ? "" : detMetaHtml(summary)}
             ${d.description ? `<p class="desc">${esc(d.description)}</p>` : ""}
             ${arch ? "" : skillMetaHtml(d.frontmatter)}
             ${arch && d.reason ? `<p class="desc" style="color:var(--dim)"><b>Archived:</b> ${esc(d.reason)}</p>` : ""}
-            <div class="viewerbar" id="viewerbar"><span class="fname" id="fname"></span><span class="seg vhide" id="seg"><b data-mode="rendered">Rendered</b><span data-mode="source">Source</span></span></div>
+            <div class="viewerbar" id="viewerbar"><span class="fname" id="fname"></span><span class="seg vhide" id="seg"><b data-mode="rendered">Rendered</b><span data-mode="source">Source</span></span>${FILE_EXPORT_BTN}</div>
             <div id="viewer"></div>
           </main>
-          <aside class="meta">
-            <div class="sect"><p class="railh" style="padding:0 0 8px">Active on</p>${arch ? '<p class="rmeta">Archived — not on any runtime.</p>' : togglesHtml}</div>
+          <aside class="meta" id="metapane">
+            <div class="sect"><div class="railhrow"><p class="railh">Active on</p>${linkAllBtn}</div>${arch ? '<p class="rmeta">Archived — not on any runtime.</p>' : togglesHtml}</div>
             <div class="histhd">
               <span class="railh">History</span>
               <span class="hfname" id="histfname"></span>
@@ -1428,9 +3523,10 @@ async function renderDetail(name, seq) {
   if (arch) {
     $("#d-restore")?.addEventListener("click", () => doRestore(name));
   } else {
-    $("#d-rename")?.addEventListener("click", () => doRename(name));
-    $("#d-archive")?.addEventListener("click", () => doArchive(name));
+    $("#d-export")?.addEventListener("click", () => doExport([name]));
+    $("#d-linkall")?.addEventListener("click", () => linkEverywhere(name));
   }
+  wireDetailPanes();
   // keep the current skill visible in the pinned rail list
   document
     .querySelector(".railbottom .file.plain.sel")
@@ -1443,39 +3539,95 @@ async function renderDetail(name, seq) {
   if (first) await selectFile(first);
   else renderHistory(name, "SKILL.md");
 }
-async function selectFile(p) {
+// Markdown assets that are source templates should open as code. Keep the rule
+// narrow: ordinary Markdown assets and documentation containing fenced HTML
+// are reading surfaces and remain rendered.
+function defaultMarkdownView(path, content) {
+  if (!/(^|\/)assets\/.*\.(md|markdown)$/i.test(path)) return "rendered";
+  const body = String(content || "")
+    .replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")
+    .trimStart();
+  return /^<(?:!doctype\b|!--|html\b|head\b|body\b|main\b|section\b|article\b|div\b|table\b|svg\b|style\b|script\b)/i.test(
+    body,
+  )
+    ? "source"
+    : "rendered";
+}
+
+// Open a file in the viewer: mark it in the rail, name it, read it, then hand
+// off to the Markdown/plain renderers. Shared by the vault detail and a
+// read-only source, which differ only in the rail they mark and the endpoint
+// they read from.
+async function showFile(p, listSel, attr, url, dlUrl) {
   currentFile = p;
+  // The gallery entry is its own rail section, outside the file list, so the
+  // list's own pass over the rows cannot unmark it.
+  $("#gal-entry")?.classList.remove("sel");
+  document.querySelectorAll(`${listSel} .file`).forEach((b) => {
+    const on = b.dataset[attr] === p;
+    b.classList.toggle("sel", on);
+    if (on) b.scrollIntoView({ block: "nearest" });
+  });
+  const fn = $("#fname");
+  if (fn) fn.textContent = p;
+  const xb = $("#v-export");
+  const r = await api(url);
+  if (!$("#viewer")) return;
+  // A read that lands after the reader moved on paints over what they asked
+  // for: opening the gallery while the detail's own SKILL.md is still in
+  // flight put the file back a beat later, and clicking two files quickly
+  // could leave the slower one on screen. Whoever set currentFile last wins.
+  if (currentFile !== p) return;
+  if (!r.ok) {
+    $("#viewer").innerHTML =
+      `<div class="empty">${esc(r.data.error || "cannot read file")}</div>`;
+    $("#seg")?.classList.add("vhide");
+    if (xb) xb.hidden = true;
+    return;
+  }
+  // The export button follows the file actually on screen: armed only once the
+  // read came back, and off in every state that is not a readable file — an
+  // unreadable one, and the commit diff, which reuses this same bar and would
+  // otherwise hand over the working copy under the label of an older version.
+  if (xb) {
+    xb.hidden = false;
+    xb.onclick = () => {
+      window.location.assign(dlUrl);
+      toast(`Exporting ${p.split("/").pop()}…`);
+    };
+  }
+  currentFileData = r.data;
+  // The Rendered/Source toggle is a Markdown affordance; everything else
+  // renders plain (highlighted, or as an image/binary).
+  const isMd = /\.(md|markdown)$/i.test(p) && r.data.kind === "text";
+  $("#seg")?.classList.toggle("vhide", !isMd);
+  if (isMd) setMode(defaultMarkdownView(p, r.data.content));
+  else renderPlain();
+  scrollViewerTop();
+}
+async function selectFile(p) {
   const vb = $("#viewerbar");
   if (vb) vb.hidden = false;
   const hb = $("#hist-back");
   if (hb) hb.hidden = true;
+  // File view: show the header filename again (a commit diff hides it so the
+  // "Back to <file>" button doesn't duplicate and overlap it in the narrow rail).
+  const hfShow = $("#histfname");
+  if (hfShow) hfShow.hidden = false;
   document
     .querySelectorAll("#history .commit")
     .forEach((c) => c.classList.remove("sel"));
-  document.querySelectorAll("#filelist .file").forEach((b) => {
-    const on = b.dataset.file === p;
-    b.classList.toggle("sel", on);
-    if (on) b.scrollIntoView({ block: "nearest" });
-  });
-  $("#fname").textContent = p;
   // Scope the history rail to this file (git log of the file, not the
   // whole skill), so selecting live-state.md shows live-state.md's history.
   renderHistory(current, p);
-  const r = await api(
-    `/api/file?name=${encodeURIComponent(current)}&path=${encodeURIComponent(p)}`,
+  const qs = `name=${encodeURIComponent(current)}&path=${encodeURIComponent(p)}`;
+  await showFile(
+    p,
+    "#filelist",
+    "file",
+    `/api/file?${qs}`,
+    `/api/file-download?${qs}`,
   );
-  if (!r.ok) {
-    $("#viewer").innerHTML =
-      `<div class="empty">${esc(r.data.error || "cannot read file")}</div>`;
-    $("#seg").classList.add("vhide");
-    return;
-  }
-  currentFileData = r.data;
-  const isMd = /\.(md|markdown)$/i.test(p) && r.data.kind === "text";
-  $("#seg").classList.toggle("vhide", !isMd);
-  if (isMd) setMode(viewMode);
-  else renderPlain();
-  scrollViewerTop();
 }
 // When switching files, bring the content column back to the top so each
 // file starts from its beginning, not the previous scroll position.
@@ -1503,21 +3655,51 @@ function setMode(m) {
       : `<span data-mode="${b.dataset.mode}">${b.textContent}</span>`;
   });
   if (m === "rendered") {
+    // A read-only source skill isn't in the vault state; its title rides on
+    // srcSkill instead.
     const skillTitle =
-      (
-        (state.skills || []).find((s) => s.name === current) ||
-        (state.archived || []).find((s) => s.name === current) ||
-        {}
-      ).title || current;
+      curSource !== "personal"
+        ? (srcSkill && (srcSkill.title || srcSkill.name)) || ""
+        : (
+            (state.skills || []).find((s) => s.name === current) ||
+            (state.archived || []).find((s) => s.name === current) ||
+            {}
+          ).title || current;
     $("#viewer").innerHTML =
       `<article class="md doc">${renderMd(currentFileData.content, currentFile !== "SKILL.md", currentFile, skillTitle)}</article>`;
+    mountMermaid($("#viewer"));
   } else renderPlain();
+}
+// A photograph opened from the rail takes the column it is read in, the way a
+// wide one already did. Capped at twice its own resolution: past that a small
+// asset — an icon, a badge, a diagram — is mush rather than a picture, and the
+// honest size is the one it was drawn at. `min()` does the arithmetic in CSS,
+// so the picture keeps following the column when the window changes.
+const PICTURE_UPSCALE = 2;
+function fillColumn(img) {
+  const fit = () => {
+    if (img.naturalWidth)
+      img.style.width = `min(100%, ${img.naturalWidth * PICTURE_UPSCALE}px)`;
+  };
+  if (img.complete) fit();
+  else img.addEventListener("load", fit, { once: true });
 }
 function renderPlain() {
   const d = currentFileData;
   if (d.kind === "image") {
-    $("#viewer").innerHTML =
-      `<img class="preview" style="max-width:100%;border:1px solid var(--line);border-radius:9px" src="${esc(d.content)}" alt="">`;
+    // The bytes come from their own endpoint (d.src), not inlined in the JSON:
+    // a photo in assets/ is megabytes and the browser streams it.
+    $("#viewer").innerHTML = `<img class="preview" src="${esc(d.src)}" alt="">`;
+    // A read that fails after the listing (deleted meanwhile, or a source path
+    // the raw route refuses) would leave a broken-image glyph; say it instead.
+    const img = $("#viewer img");
+    if (img) {
+      img.onerror = () => {
+        $("#viewer").innerHTML =
+          `<div class="empty">Image not readable, ${fmtSize(d.size)}</div>`;
+      };
+      fillColumn(img);
+    }
     return;
   }
   if (d.kind === "binary") {
@@ -1536,7 +3718,12 @@ async function renderHistory(name, filePath) {
   // The header names the tracked file when it isn't the main SKILL.md, so
   // it's clear the commits below belong to that file, not the whole skill.
   const hf = $("#histfname");
-  if (hf) hf.textContent = filePath && filePath !== "SKILL.md" ? filePath : "";
+  if (hf) {
+    // Just the filename in the narrow rail; full path on hover.
+    const scoped = filePath && filePath !== "SKILL.md" ? filePath : "";
+    hf.textContent = scoped ? scoped.split("/").pop() : "";
+    hf.title = scoped;
+  }
   const q = filePath ? `&path=${encodeURIComponent(filePath)}` : "";
   const r = await api(`/api/history?name=${encodeURIComponent(name)}${q}`);
   const box = $("#history");
@@ -1569,10 +3756,21 @@ async function showCommit(hash, subj) {
   $("#fname").textContent =
     `commit ${hash.slice(0, 9)}${subj ? " · " + subj : ""}`;
   $("#seg").classList.add("vhide");
+  // No export here: the bar names a commit, and the only file this endpoint
+  // could hand over is the working copy, which is not what is on screen.
+  const xb = $("#v-export");
+  if (xb) xb.hidden = true;
   $("#viewer").innerHTML = `<pre class="plain">${colorDiff(r.data.diff)}</pre>`;
+  // Diff view: hide the header filename — the "Back to <file>" button below
+  // already names it, and both together overflow the narrow rail.
+  const hfHide = $("#histfname");
+  if (hfHide) hfHide.hidden = true;
   const back = $("#hist-back");
   if (back) {
-    back.textContent = `← Back to ${currentFile || "SKILL.md"}`;
+    const backFile = currentFile || "SKILL.md";
+    // Just the filename — a deep references/ path makes this label overflow.
+    back.textContent = `← Back to ${backFile.split("/").pop()}`;
+    back.title = backFile; // full path still available on hover
     back.hidden = false;
     back.onclick = () => {
       document
@@ -1620,6 +3818,71 @@ const STATUS_CLS = {
   Removed: "warn",
   Renamed: "off",
 };
+// One coverage-table row: per-consumer link-state cells, plus a "Link all"
+// shortcut when the skill is projectable (active/draft) and a symlink runtime is
+// still missing. Named so a single row can be swapped in place after linking (no
+// full re-render), which keeps the Status scroll position.
+// True when a skill should offer the "Link all" shortcut: it is projectable
+// (active/draft) and still missing on at least one symlink runtime.
+function skillNeedsLink(s, consumers) {
+  const projectable =
+    (s.status ?? "active") === "active" || s.status === "draft";
+  if (!projectable) return false;
+  return consumers.some((c) => {
+    const cv = state.consumers[c];
+    if (cv && typeof cv === "object" && cv.mode === "in-place") return false;
+    const cell = state.matrix.find(
+      (m) => m.skill === s.name && m.consumer === c,
+    );
+    return (cell ? cell.state : "missing") === "missing";
+  });
+}
+// One coverage-table row. `withAction` adds the trailing action cell; the table
+// only includes that column when some row needs linking, and the column is
+// shrink-to-content, so it never claims a full column's width.
+function coverageRow(s, consumers, withAction) {
+  const cells = consumers
+    .map((c) => {
+      const cell = state.matrix.find(
+        (m) => m.skill === s.name && m.consumer === c,
+      );
+      // Suspended skills aren't in the matrix (they don't count toward health),
+      // but their coverage is deterministic: an in-place consumer still serves
+      // them from the vault; a symlink consumer doesn't link them.
+      const cv = state.consumers[c];
+      const isInplace = cv && typeof cv === "object" && cv.mode === "in-place";
+      const st = cell ? cell.state : isInplace ? "served" : "missing";
+      const cls =
+        st === "linked" || st === "served"
+          ? "ok"
+          : st === "missing" || st === "external" || st === "disabled"
+            ? "off"
+            : "bad";
+      // "external" and "disabled" are declared, not measured — they read as
+      // quiet as "not linked" because nothing is wrong with them.
+      const word =
+        st === "linked"
+          ? "linked"
+          : st === "served"
+            ? "served"
+            : st === "missing"
+              ? "not linked"
+              : st === "foreign"
+                ? "conflict"
+                : st;
+      return `<td class="cst"><span class="badge ${cls}">${esc(word)}</span></td>`;
+    })
+    .join("");
+  const rowAction = skillNeedsLink(s, consumers)
+    ? `<button class="linkall" data-linkall="${esc(s.name)}" title="Link ${esc(s.name)} into every runtime it is not on yet">Link all</button>`
+    : "";
+  return (
+    `<tr data-cov="${esc(s.name)}"><td class="mono">${esc(s.name)}</td>` +
+    cells +
+    `<td class="awhen">${esc(fmtWhen(s.modified))}</td>` +
+    (withAction ? `<td class="rowact">${rowAction}</td>` : "")
+  );
+}
 async function renderStatus(seq) {
   const diffR = (await api("/api/diff")).data;
   sync = (await api("/api/sync")).data;
@@ -1667,45 +3930,10 @@ async function renderStatus(seq) {
     changesHtml = `<div class="clist">${rows}</div>`;
   }
 
-  // coverage table
-  let cov = `<tr><th>Skill</th>${consumers.map((c) => `<th>${esc(rtName(c))}</th>`).join("")}<th>Updated</th></tr>`;
-  for (const s of state.skills) {
-    cov +=
-      `<tr><td class="mono">${esc(s.name)}</td>` +
-      consumers
-        .map((c) => {
-          const cell = state.matrix.find(
-            (m) => m.skill === s.name && m.consumer === c,
-          );
-          // Suspended skills aren't in the matrix (they don't count toward
-          // health), but their coverage is deterministic: an in-place
-          // consumer still serves them from the vault; a symlink consumer
-          // doesn't link them. Show that honestly instead of a bare "?".
-          const cv = state.consumers[c];
-          const isInplace =
-            cv && typeof cv === "object" && cv.mode === "in-place";
-          const st = cell ? cell.state : isInplace ? "served" : "missing";
-          const cls =
-            st === "linked" || st === "served"
-              ? "ok"
-              : st === "missing"
-                ? "off"
-                : "bad";
-          const word =
-            st === "linked"
-              ? "linked"
-              : st === "served"
-                ? "served"
-                : st === "missing"
-                  ? "not linked"
-                  : st === "foreign"
-                    ? "conflict"
-                    : st;
-          return `<td class="cst"><span class="badge ${cls}">${esc(word)}</span></td>`;
-        })
-        .join("") +
-      `<td class="awhen">${esc(fmtWhen(s.modified))}</td></tr>`;
-  }
+  // coverage table — the action column exists only when a row needs linking
+  const anyLink = state.skills.some((s) => skillNeedsLink(s, consumers));
+  let cov = `<tr><th>Skill</th>${consumers.map((c) => `<th>${esc(rtName(c))}</th>`).join("")}<th>Updated</th>${anyLink ? '<th class="rowacth"></th>' : ""}</tr>`;
+  for (const s of state.skills) cov += coverageRow(s, consumers, anyLink);
 
   // taxonomy health
   const statusCounts = {};
@@ -1713,7 +3941,11 @@ async function renderStatus(seq) {
     const k = s.status || "active";
     statusCounts[k] = (statusCounts[k] || 0) + 1;
   }
-  const untagged = state.skills.filter((s) => !s.domain || !s.layer);
+  const axisIds = axisList().map((a) => a.id);
+  const untagged = state.skills.filter((s) => axisIds.some((id) => !s[id]));
+  const axisNames = axisIds
+    .map((id) => axisLabel(id).toLowerCase())
+    .join(" or ");
   const statusRows = Object.keys(statusCounts)
     .sort()
     .map(
@@ -1721,7 +3953,7 @@ async function renderStatus(seq) {
         `<tr><td class="mono">${esc(k)}</td><td class="awhen">${statusCounts[k]} skill${statusCounts[k] === 1 ? "" : "s"}</td></tr>`,
     )
     .join("");
-  const taxHtml = `<section class="coverage"><div class="covhead"><h2>Taxonomy</h2><span class="cnt">${state.skills.length} skills · by lifecycle status</span></div><table class="grid"><tr><th>Status</th><th>Count</th></tr>${statusRows}</table>${untagged.length ? `<div class="taxmiss"><span class="badge warn">Missing taxonomy</span> ${untagged.length} skill${untagged.length === 1 ? "" : "s"} without domain or layer: ${untagged.map((s) => `<span class="mono">${esc(s.name)}</span>`).join(", ")}</div>` : ""}</section>`;
+  const taxHtml = `<section class="coverage"><div class="covhead"><h2>Taxonomy</h2><span class="cnt">${state.skills.length} skills · by lifecycle status</span></div><table class="grid"><tr><th>Status</th><th>Count</th></tr>${statusRows}</table>${untagged.length ? `<div class="taxmiss"><span class="badge warn">Missing taxonomy</span> ${untagged.length} skill${untagged.length === 1 ? "" : "s"} without ${axisNames}: ${untagged.map((s) => `<span class="mono">${esc(s.name)}</span>`).join(", ")}</div>` : ""}</section>`;
 
   // hygiene findings — advisory (H1 drift, machine paths, opt-in lint)
   const KIND_WORD = {
@@ -1731,15 +3963,22 @@ async function renderStatus(seq) {
     "body-length": "body too long",
     "missing-section": "missing section",
     "missing-taxonomy": "missing taxonomy",
-    "unknown-domain": "unknown domain",
-    "unknown-layer": "unknown layer",
+    "prose-wall": "wall of text",
+    "structured-doc": "wrong doc shape",
+    "forbidden-pattern": "forbidden pattern",
   };
+  // Any axis can produce "unknown-<axisId>" (Task 5's gate validates every
+  // declared axis, not just domain/layer), so a fixed map can never carry an
+  // entry for every axis a vault might declare — the fallback covers them all.
+  const kindWord = (kind) =>
+    KIND_WORD[kind] ||
+    (kind.startsWith("unknown-") ? `unknown ${kind.slice(8)}` : kind);
   const warnings = state.warnings || [];
   const hygieneHtml = warnings.length
     ? `<section class="coverage"><div class="covhead"><h2>Hygiene</h2><span class="cnt">${warnings.length} advisory finding${warnings.length === 1 ? "" : "s"} · never block linking</span></div><table class="grid"><tr><th>Skill</th><th>Finding</th><th>Detail</th></tr>${warnings
         .map(
           (w) =>
-            `<tr><td class="mono">${esc(w.name)}</td><td><span class="badge warn">${esc(KIND_WORD[w.kind] || w.kind)}</span></td><td class="awhen">${esc(w.detail)}</td></tr>`,
+            `<tr><td class="mono">${esc(w.name)}${w.file ? ` <span class="path">${esc(w.file)}</span>` : ""}</td><td><span class="badge warn">${esc(kindWord(w.kind))}</span></td><td class="awhen">${esc(w.detail)}</td></tr>`,
         )
         .join("")}</table></section>`
     : "";
@@ -1816,7 +4055,7 @@ async function renderStatus(seq) {
             ${changesHtml}
             ${hygieneHtml}
             ${taxHtml}
-            <section class="coverage"><div class="covhead"><h2>Runtime coverage</h2><span class="cnt">${state.skills.length} skills · ${listJoin(consumers.map(rtName))}</span></div><p class="covlegend"><b>linked</b> symlink to the vault · <b>not linked</b> nothing installed at the runtime path · <b>conflict</b> something that is not the vault's link owns that path; skill-loom never overwrites it</p><table class="grid">${cov}</table></section>
+            <section class="coverage"><div class="covhead"><h2>Runtime coverage</h2><span class="cnt">${state.skills.length} skills · ${listJoin(consumers.map(rtName))}</span></div><p class="covlegend"><b>linked</b> symlink to the vault · <b>not linked</b> nothing installed at the runtime path · <b>conflict</b> something that is not the vault's link owns that path; skill-loom never overwrites it · <b>external</b> that runtime's own skill by the same name, declared in <code>loom.local.json</code> and left alone</p><table class="grid">${cov}</table></section>
           </main>
           <aside class="statusrail">
             <div class="rblock"><p class="rh">Vault health</p>${verdict}<div class="vsupport">${vitems}</div></div>
@@ -1844,7 +4083,9 @@ async function doSaveSync() {
     const forced = await api("/api/sync", { apply: true, force: true });
     toast(forced.data.message || forced.data.error || "done");
     await loadState();
-    return go("status");
+    // Repaint where the user already is. Syncing is a background chore, not a
+    // reason to move them to Status: the toast already reports the outcome.
+    return go(curView, current);
   }
   if (!dry.ok)
     return toast(dry.data.message || dry.data.error || "sync failed");
@@ -1855,7 +4096,7 @@ async function doSaveSync() {
   const wet = await api("/api/sync", { apply: true });
   toast(wet.data.message || wet.data.error || "done");
   await loadState();
-  go("status");
+  go(curView, current);
 }
 async function doPresetAdd(name, p) {
   const r = await api("/api/consumers", { name, path: p });
@@ -1892,7 +4133,7 @@ async function doRuntimeAdd() {
 }
 async function doNameAdd() {
   const word = await promptDialog(
-    'Word to re-case (one kebab segment, e.g. "forpros"):',
+    'Word to re-case (one kebab segment, e.g. "acmeai"):',
     "",
     "Next",
   );
@@ -1919,9 +4160,11 @@ async function doLink(apply) {
       ? `Connect "${i.source}" to ${i.target}`
       : i.action === "replace-stale"
         ? `Repair the link for "${i.source}"`
-        : i.action === "conflict"
-          ? `Skip: ${i.target} has its own copy of "${i.source}"`
-          : `${i.action} ${i.target}`;
+        : i.action === "remove-orphan"
+          ? `Remove obsolete link ${i.target}`
+          : i.action === "conflict"
+            ? `Skip: ${i.target} has its own copy of "${i.source}"`
+            : `${i.action} ${i.target}`;
   if (!(await confirmActions("Fix links?", pending.map(phrase)))) return;
   const wet = await api("/api/link", { apply: true });
   if (wet.status === 409 && wet.data.conflicts)
@@ -1935,46 +4178,45 @@ async function doLink(apply) {
 function renderNew() {
   setFixed(false);
   const consumers = Object.keys(state.consumers);
-  // The form mirrors the vault's rules (loom.json lint): show and require
-  // the taxonomy the vault demands, populate dropdowns from its allowed
-  // values, and scaffold the sections it requires — so a new skill is born
-  // gate-ready. A vault with no lint gets the plain name + description form.
+  // The form mirrors the vault's declared axes: one field per axis (Task
+  // 1's resolveAxes always returns at least the domain/layer default, so
+  // this is never empty), required ones flagged from lint.requireTaxonomy,
+  // and scaffolds the sections lint requires. state.axes[].values is the
+  // primary source of allowed values — it is unconditional; the lint
+  // block's allowedByAxis is only a secondary source (null whenever the
+  // vault has no lint block, even one that declares taxonomy).
   const lint = state.lint || null;
   const req = (lint && lint.requireTaxonomy) || [];
-  const domains = (lint && lint.allowedDomains) || [];
-  const layers = (lint && lint.allowedLayers) || [];
-  const needsDomain = req.includes("domain");
-  const needsLayer = req.includes("layer");
-  const showDomain = needsDomain || domains.length > 0;
-  const showLayer = needsLayer || layers.length > 0;
-  const showTaxo = showDomain || showLayer;
   const sections = (lint && lint.requireSections) || [];
   const minChars = lint && lint.descriptionMinChars;
-  const selField = (id, label, values, required, hint) =>
-    `<div class="field-row"><label class="field" for="${id}">${label}${required ? ' <span class="req">required</span>' : ""}</label>` +
-    (values.length
-      ? `<select class="txt" id="${id}"${required ? " required" : ""}><option value="">(choose)</option>${values.map((v) => `<option>${esc(v)}</option>`).join("")}</select>`
-      : `<input class="txt" id="${id}"${required ? " required" : ""} spellcheck="false" placeholder="${esc(label.toLowerCase())}" />`) +
-    `<p class="hint">${hint}</p></div>`;
-  const domainRow = showDomain
-    ? selField(
-        "n-domain",
-        "Domain",
-        domains,
-        needsDomain,
-        "Who the skill belongs to: a brand, a project.",
-      )
-    : "";
-  const layerRow = showLayer
-    ? selField(
-        "n-layer",
-        "Layer",
-        layers,
-        needsLayer,
-        "What kind of work it does.",
-      )
-    : "";
-  const statusRow = showTaxo
+  const axisAllowed = (a) =>
+    a.values && a.values.length
+      ? a.values
+      : ((lint && lint.allowedByAxis) || {})[a.id] || [];
+  // Status is offered only when the vault has SOME taxonomy signal (a
+  // required axis, or a declared vocabulary for one) — this mirrors the
+  // pre-Task-6 showTaxo gate. A vault with no lint and no declared values
+  // still gets a field per axis (Step 7), but stays a plain name+
+  // description+status-less form otherwise: buildSkillMd (src/ops.ts)
+  // reads that as "nothing provided" and writes the commented hint
+  // scaffold instead of a live status: draft line, and a status-less
+  // skill reads back as "active", not "draft" (server.ts's `?? "active"`)
+  // — sending status unconditionally would silently flip that default.
+  const showStatus = axisList().some(
+    (a) => req.includes(a.id) || axisAllowed(a).length > 0,
+  );
+  const axisFields = axisList()
+    .map((a) => {
+      const allowed = axisAllowed(a);
+      const required = req.includes(a.id);
+      const id = `n-ax-${a.id}`;
+      const control = allowed.length
+        ? `<select class="txt" id="${id}"${required ? " required" : ""}><option value="">(choose)</option>${allowed.map((v) => `<option value="${esc(v)}">${esc(humanTax(v))}</option>`).join("")}</select>`
+        : `<input class="txt" id="${id}"${required ? " required" : ""} spellcheck="false" placeholder="${esc(axisLabel(a.id).toLowerCase())}" />`;
+      return `<div class="field-row"><label class="field" for="${id}">${esc(axisLabel(a.id))}${required ? ' <span class="req">required</span>' : ""}</label>${control}</div>`;
+    })
+    .join("");
+  const statusRow = showStatus
     ? `<div class="field-row"><label class="field" for="n-status">Status</label><select class="txt" id="n-status">${STATUS_ORDER.map((v) => `<option value="${esc(v)}"${v === "draft" ? " selected" : ""}>${esc(statusLabel(v))}</option>`).join("")}</select><p class="hint">Lifecycle. New skills start as a draft.</p></div>`
     : "";
   app().innerHTML = `<div class="newwrap">
@@ -1984,7 +4226,7 @@ function renderNew() {
           <div class="newgrid">
             <form id="newform">
               <div class="field-row"><label class="field" for="n-name">Name</label><input class="txt" id="n-name" placeholder="ai-act-readiness" pattern="[a-z0-9][a-z0-9-]*" spellcheck="false" required /><p class="hint">Lowercase, words joined by dashes. Folder name and the id agents match on. <span class="mono" id="n-slug"></span></p></div>
-              ${domainRow}${layerRow}${statusRow}
+              ${axisFields}${statusRow}
               <div class="field-row"><label class="field" for="n-desc">Description</label><textarea class="txt" id="n-desc" spellcheck="false" placeholder="When should an agent reach for this skill?"></textarea><p class="hint">This is what an agent reads to decide.${minChars ? ` <span id="n-desccount" class="warn"></span>` : ""}</p></div>
               <div class="newactions"><button type="submit" class="btn primary">Create &amp; activate</button><button type="button" class="btn" data-go="skills">Cancel</button><span class="note">Shows a dry-run before anything is written.</span></div>
               <div id="n-out"></div>
@@ -2000,8 +4242,6 @@ function renderNew() {
   const upd = () => {
     const name = ($("#n-name").value || "").trim() || "your-skill";
     const desc = ($("#n-desc").value || "").trim();
-    const domain = $("#n-domain") ? $("#n-domain").value.trim() : "";
-    const layer = $("#n-layer") ? $("#n-layer").value.trim() : "";
     const status = $("#n-status") ? $("#n-status").value : "draft";
     $("#n-slug").textContent = name;
     $("#n-tree").innerHTML =
@@ -2010,12 +4250,14 @@ function renderNew() {
       `<span class="k">---</span>\n` +
       `<span class="k">name:</span> ${esc(name)}\n` +
       `<span class="k">description:</span> ${esc(desc || "…")}\n`;
-    if (showDomain)
-      fm += `<span class="k">domain:</span> ${esc(domain || "…")}\n`;
-    if (showLayer) fm += `<span class="k">layer:</span> ${esc(layer || "…")}\n`;
-    if (showTaxo)
+    for (const a of axisList()) {
+      const el = $(`#n-ax-${a.id}`);
+      const v = el ? el.value.trim() : "";
+      fm += `<span class="k">${esc(a.id)}:</span> ${esc(v || "…")}\n`;
+    }
+    if (showStatus)
       fm += `<span class="k">status:</span> ${esc(status || "draft")}\n`;
-    else fm += `<span class="c"># optional: domain / layer / status</span>\n`;
+    else fm += `<span class="c"># optional: status</span>\n`;
     fm += `<span class="k">---</span>`;
     if (sections.length)
       fm +=
@@ -2034,13 +4276,16 @@ function renderNew() {
 }
 async function doAdd(e) {
   e.preventDefault();
+  const taxonomy = {};
+  for (const a of axisList()) {
+    const el = $(`#n-ax-${a.id}`);
+    const v = el ? el.value.trim() : "";
+    if (v) taxonomy[a.id] = v;
+  }
   const body = {
     name: $("#n-name").value.trim(),
     description: $("#n-desc").value.trim() || undefined,
-    domain: $("#n-domain")
-      ? $("#n-domain").value.trim() || undefined
-      : undefined,
-    layer: $("#n-layer") ? $("#n-layer").value.trim() || undefined : undefined,
+    taxonomy,
     status: $("#n-status") ? $("#n-status").value : undefined,
   };
   const dry = await api("/api/add", { ...body, apply: false });
@@ -2163,7 +4408,11 @@ function renderRulesForm() {
     return `<button type="button" class="chip${on ? " accent" : ""}" data-rules-taxo="${key}">${esc(label)}${on ? ` <span class="req-badge">required</span>` : ""}</button>`;
   }).join("");
 
-  const chipList = (field, opts) => {
+  // `label` names the control for assistive tech. The visible row title sits in
+  // a sibling .edk div, which no accessible-name computation reaches: without
+  // it, Rules reads as a column of anonymous "+ add" boxes and unnamed number
+  // fields — on the surface that rewrites loom.json.
+  const chipList = (field, label, opts) => {
     const mono = opts && opts.mono;
     const display = (opts && opts.display) || ((v) => v);
     const values = d[field] || [];
@@ -2171,10 +4420,10 @@ function renderRulesForm() {
       values
         .map(
           (v) =>
-            `<span class="chip rm${mono ? " code" : ""}">${esc(display(v))} <button type="button" class="x" data-rules-chip-rm="${field}" data-rules-chip-value="${esc(v)}">×</button></span>`,
+            `<span class="chip rm${mono ? " code" : ""}">${esc(display(v))} <button type="button" class="x" aria-label="Remove ${esc(display(v))} from ${esc(label)}" data-rules-chip-rm="${field}" data-rules-chip-value="${esc(v)}">×</button></span>`,
         )
         .join("") +
-      `<input class="chip add" type="text" placeholder="+ add" spellcheck="false" data-rules-chip-add="${field}" />`
+      `<input class="chip add" type="text" placeholder="+ add" aria-label="Add to ${esc(label)}" spellcheck="false" data-rules-chip-add="${field}" />`
     );
   };
 
@@ -2182,14 +4431,14 @@ function renderRulesForm() {
     .map((v, i) => {
       const bad = !isValidRegex(v);
       return (
-        `<div class="rxrow${bad ? " rxbad" : ""}"><input class="rxinput" type="text" value="${esc(v)}" spellcheck="false" data-rules-rx-i="${i}" /><button type="button" class="x" data-rules-rx-rm="${i}">×</button></div>` +
+        `<div class="rxrow${bad ? " rxbad" : ""}"><input class="rxinput" type="text" aria-label="Forbidden pattern ${i + 1}" value="${esc(v)}" spellcheck="false" data-rules-rx-i="${i}" /><button type="button" class="x" aria-label="Remove forbidden pattern ${i + 1}" data-rules-rx-rm="${i}">×</button></div>` +
         (bad ? `<div class="rxerr">invalid regex, cannot save</div>` : "")
       );
     })
     .join("");
   const addBad = !isValidRegex(rulesPatternAdd);
   const rxAddRow =
-    `<div class="rxrow add${addBad ? " rxbad" : ""}"><input class="rxinput" type="text" placeholder="+ add pattern" spellcheck="false" value="${esc(rulesPatternAdd)}" data-rules-rx-add /></div>` +
+    `<div class="rxrow add${addBad ? " rxbad" : ""}"><input class="rxinput" type="text" placeholder="+ add pattern" aria-label="Add a forbidden pattern" spellcheck="false" value="${esc(rulesPatternAdd)}" data-rules-rx-add /></div>` +
     (addBad ? `<div class="rxerr">invalid regex, cannot save</div>` : "");
 
   const strictOn = d.strict === true;
@@ -2198,11 +4447,11 @@ function renderRulesForm() {
           <div class="panel-h"><h2>Rules</h2><p>What every skill must satisfy. Saving rewrites the lint block in loom.json and re-arms the gate.</p></div>
           <div class="edscroll">
             <div class="edrow"><div class="edk">Required taxonomy<span class="k2">Axes every skill must declare</span></div><div class="edv">${taxoRow}</div></div>
-            <div class="edrow"><div class="edk">Allowed domains<span class="k2">Frontmatter domain must be one of these</span></div><div class="edv">${chipList("allowedDomains")}</div></div>
-            <div class="edrow"><div class="edk">Allowed layers</div><div class="edv">${chipList("allowedLayers")}</div></div>
-            <div class="edrow"><div class="edk">Required sections<span class="k2">Headings each SKILL.md must contain</span></div><div class="edv">${chipList("requireSections", { mono: true, display: (v) => "## " + v })}</div></div>
-            <div class="edrow"><div class="edk">Description length</div><div class="edv">min <input class="num" type="text" inputmode="numeric" value="${d.descriptionMinChars ?? ""}" data-rules-num="descriptionMinChars" /> to max <input class="num" type="text" inputmode="numeric" value="${d.descriptionMaxChars ?? ""}" data-rules-num="descriptionMaxChars" /><span style="color:var(--faint);font-size:12.5px">characters</span></div></div>
-            <div class="edrow"><div class="edk">Body max lines<span class="k2">SKILL.md body cap, waivable per skill</span></div><div class="edv"><input class="num" type="text" inputmode="numeric" value="${d.bodyMaxLines ?? ""}" data-rules-num="bodyMaxLines" /></div></div>
+            <div class="edrow"><div class="edk">Allowed domains<span class="k2">Frontmatter domain must be one of these</span></div><div class="edv">${chipList("allowedDomains", "allowed domains")}</div></div>
+            <div class="edrow"><div class="edk">Allowed layers</div><div class="edv">${chipList("allowedLayers", "allowed layers")}</div></div>
+            <div class="edrow"><div class="edk">Required sections<span class="k2">Headings each SKILL.md must contain</span></div><div class="edv">${chipList("requireSections", "required sections", { mono: true, display: (v) => "## " + v })}</div></div>
+            <div class="edrow"><div class="edk">Description length</div><div class="edv">min <input class="num" type="text" inputmode="numeric" aria-label="Description length, minimum characters" value="${d.descriptionMinChars ?? ""}" data-rules-num="descriptionMinChars" /> to max <input class="num" type="text" inputmode="numeric" aria-label="Description length, maximum characters" value="${d.descriptionMaxChars ?? ""}" data-rules-num="descriptionMaxChars" /><span style="color:var(--faint);font-size:12.5px">characters</span></div></div>
+            <div class="edrow"><div class="edk">Body max lines<span class="k2">SKILL.md body cap, waivable per skill</span></div><div class="edv"><input class="num" type="text" inputmode="numeric" aria-label="Body max lines" value="${d.bodyMaxLines ?? ""}" data-rules-num="bodyMaxLines" /></div></div>
             <div class="edrow"><div class="edk">Forbidden patterns<span class="k2">Regex the body may not contain</span></div><div class="edv"><div class="rxlist">${rxRows}${rxAddRow}</div></div></div>
             <div class="edrow"><div class="edk">Strict gate<span class="k2">Blocks non-compliant saves</span></div><div class="edv"><button class="switch${strictOn ? " on" : ""}" aria-label="strict" data-rules-strict="1"></button><span class="pill ${strictOn ? "on" : "off"}"><span class="pd"></span>${strictOn ? "on, blocks non-compliant saves" : "off, advisory only"}</span></div></div>
           </div>
@@ -2580,6 +4829,7 @@ function renderDocPane(p) {
     : "";
   const body = docView === "hist" ? docHistoryHtml(d.commits) : d.bodyHtml;
   p.innerHTML = `<div class="panel"><div class="panel-h"><div class="ph-top"><h2>${esc(d.name)} <span class="badge off" style="margin-left:8px">read only</span></h2>${rev}${seg}</div>${d.subtitle}</div><div id="doc-body">${body}</div></div>`;
+  if (docView !== "hist") mountMermaid(document.getElementById("doc-body"));
   const segEl = document.getElementById("docseg");
   if (segEl)
     segEl.onclick = (e) => {
@@ -2749,7 +4999,14 @@ function renderRuntimesPane() {
               }
               const loc = typeof p === "string" ? p : (p && p.path) || "";
               const links = (state.matrix || []).filter(
-                (m) => m.consumer === rt.name,
+                (m) =>
+                  m.consumer === rt.name &&
+                  // Overridden pairs are out of this runtime's count: a
+                  // runtime that keeps one skill of its own would otherwise
+                  // read "60 of 61" and never turn on, which is a permanent
+                  // partial for a state that is finished.
+                  m.state !== "external" &&
+                  m.state !== "disabled",
               );
               const linked = links.filter((m) => m.state === "linked").length;
               // on = fully linked; a partial runtime reads as off, and the
@@ -2811,17 +5068,20 @@ function wireSyncPane() {
 // frontmatter status (from the server), not the archived state — that is
 // shown by the Archived badge and the archive view itself.
 function archivedCards() {
+  // No fabricated link or sync state: an archived skill is served by no
+  // runtime, and the archive carries no git state of its own. The views that
+  // showed those two columns drop them in archived mode instead of filling
+  // them with a default that reads as a measurement.
   return (state.archived || []).map((x) => ({
     ...x,
     modified: x.date || "",
     status: x.status || "active",
-    sync: "clean",
   }));
 }
 // Archive is just the library in archived mode — same rail, table, grid,
 // search — so it renders through renderLibrary, not a separate view.
 function renderArchived() {
-  libArchived = true;
+  setLibArchived(true);
   renderLibrary();
 }
 
@@ -2844,47 +5104,26 @@ function renderEmpty() {
 }
 
 /* ---------- lifecycle actions ---------- */
-async function doArchive(name) {
-  // No reason prompt: the archive is folder-based and the reason is no
-  // longer surfaced. Just confirm the plan.
-  const dry = await api("/api/archive", {
-    name,
-    reason: "",
-    apply: false,
-  });
-  if (!dry.ok) return toast(dry.data.message || dry.data.error);
-  if (!(await confirmActions(`Archive "${name}"?`, dry.data.actions))) return;
-  const wet = await api("/api/archive", {
-    name,
-    reason: "",
-    apply: true,
-  });
-  toast(wet.data.message || wet.data.error);
-  await loadState();
-  go("skills");
-}
-async function doRename(name) {
-  const next = await promptDialog(`Rename "${name}" to:`, name, "Rename");
-  if (!next || next === name) return;
-  const dry = await api("/api/migrate", {
-    old: name,
-    new: next,
-    apply: false,
-  });
-  if (!dry.ok) return toast(dry.data.message || dry.data.error);
-  if (
-    !(await confirmActions(`Rename "${name}" to "${next}"?`, dry.data.actions))
-  )
-    return;
-  const wet = await api("/api/migrate", {
-    old: name,
-    new: next,
-    apply: true,
-  });
-  toast(wet.data.message || wet.data.error);
-  await loadState();
-  if (wet.ok) go("detail", next);
-  else go("detail", name);
+
+// A skill folder as one file: everything under it, SKILL.md and references and
+// scripts alike, zipped by the server that already has the vault open. The
+// vault stays where it is — this is a copy for somewhere that does not have
+// it, an attachment or a hand-off, not a step in a workflow.
+//
+// A plain navigation rather than fetch + Blob: the response carries
+// content-disposition, so the browser saves the file and the page never moves.
+// The cost is that a failure arrives as the server's JSON in a tab instead of
+// a toast, which for a local dashboard reading its own vault is the honest
+// trade for not holding a second copy of the archive in memory.
+function doExport(names) {
+  if (!names.length) return;
+  const qs = names.map((n) => `name=${encodeURIComponent(n)}`).join("&");
+  window.location.assign(`/api/export?${qs}`);
+  toast(
+    names.length === 1
+      ? `Exporting ${names[0]}…`
+      : `Exporting ${names.length} skills…`,
+  );
 }
 
 /* ---------- bulk actions + context menu ---------- */
@@ -2918,6 +5157,8 @@ function ctxItems() {
     return (
       `<div class="ctxhd">${head}</div>` +
       (n === 1 ? `<button class="ctxitem" data-ctx="open">Open</button>` : "") +
+      // Reading is what the archive is for, and taking a copy is reading.
+      `<button class="ctxitem" data-ctx="export">Export</button>` +
       `<button class="ctxitem" data-ctx="restore">Restore</button>`
     );
   }
@@ -2932,27 +5173,26 @@ function ctxItems() {
     v,
     label: statusLabel(v),
   }));
-  const domainVals = (
-    state.lint && state.lint.allowedDomains.length
-      ? state.lint.allowedDomains
-      : axisValues("domain")
-  ).map((v) => ({ v, label: humanTax(v) }));
-  const layerVals = (
-    state.lint && state.lint.allowedLayers.length
-      ? state.lint.allowedLayers
-      : axisValues("layer")
-  ).map((v) => ({ v, label: humanTax(v) }));
+  // One submenu per declared axis. Prefixed "tax:" in data-ctx so it can't
+  // collide with the fixed kinds (status/rename/archive/restore) below —
+  // bulkTaxonomyOp (src/ops.ts) already validates any declared axis id.
+  const axisSubs = axisList()
+    .map((a) => {
+      const vals = (
+        a.values && a.values.length ? a.values : axisValues(a.id)
+      ).map((v) => ({ v, label: humanTax(v) }));
+      const label = `Set ${esc(axisLabel(a.id))}`;
+      return vals.length
+        ? sub(label, `tax:${a.id}`, vals)
+        : `<div class="ctxitem disabled">${label} (none defined)</div>`;
+    })
+    .join("");
   return (
     `<div class="ctxhd">${head}</div>` +
     (n === 1 ? `<button class="ctxitem" data-ctx="open">Open</button>` : "") +
     sub("Set status", "status", statusOpts) +
-    (domainVals.length
-      ? sub("Set domain", "domain", domainVals)
-      : `<div class="ctxitem disabled">Set domain (none defined)</div>`) +
-    (layerVals.length
-      ? sub("Set layer", "layer", layerVals)
-      : `<div class="ctxitem disabled">Set layer (none defined)</div>`) +
-    `<button class="ctxitem" data-ctx="rename">Rename…</button>` +
+    axisSubs +
+    `<button class="ctxitem" data-ctx="export">Export</button>` +
     `<button class="ctxitem" data-ctx="archive">Archive</button>`
   );
 }
@@ -2982,24 +5222,21 @@ async function onCtxClick(e) {
   const val = b.dataset.val;
   ctxClose();
   if (kind === "open") return go("detail", [...libSel][0]);
+  if (kind === "export") return doExport([...libSel]);
   if (kind === "status")
     return bulkAction(
       "/api/bulk/status",
       { status: val },
       `Set status to "${statusLabel(val)}"?`,
     );
-  if (kind === "domain")
+  if (kind.startsWith("tax:")) {
+    const axisId = kind.slice(4);
     return bulkAction(
       "/api/bulk/taxonomy",
-      { field: "domain", value: val },
-      `Set domain to "${humanTax(val)}"?`,
+      { field: axisId, value: val },
+      `Set ${axisLabel(axisId)} to "${humanTax(val)}"?`,
     );
-  if (kind === "layer")
-    return bulkAction(
-      "/api/bulk/taxonomy",
-      { field: "layer", value: val },
-      `Set layer to "${humanTax(val)}"?`,
-    );
+  }
   if (kind === "archive")
     return bulkAction(
       "/api/bulk/archive",
@@ -3012,20 +5249,6 @@ async function onCtxClick(e) {
       {},
       `Restore ${libSel.size} skill(s)?`,
     );
-  if (kind === "rename") return bulkRename();
-}
-// Single target reuses the free-text prompt (nicer than a transform);
-// 2+ targets collect a pattern transform and hit the bulk-rename route.
-async function bulkRename() {
-  const names = [...libSel];
-  if (names.length === 1) return doRename(names[0]);
-  const t = await renameTransformDialog(names.length);
-  if (!t) return;
-  return bulkAction(
-    "/api/bulk/rename",
-    { transform: t },
-    "Rename these skills?",
-  );
 }
 
 /* ---------- markdown (escaped-first minimal renderer) ---------- */
@@ -3033,6 +5256,11 @@ async function bulkRename() {
 const LANG_BY_EXT = {
   py: "python",
   json: "json",
+  // One JSON object per line: the JSON tokenizer colours each of them, which
+  // is the whole point of opening a run log in the viewer.
+  jsonl: "json",
+  ndjson: "json",
+  jsonc: "json",
   js: "javascript",
   mjs: "javascript",
   cjs: "javascript",
@@ -3377,12 +5605,21 @@ function highlight(code, lang) {
   }
 }
 
-// VSCode-style colour chip: prepend a swatch to any #hex inside inline code.
-function hexSw(s) {
-  return s.replace(
-    /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})\b/g,
-    (h) => `<span class="hexsw" style="background:${h}"></span>${h}`,
-  );
+// VSCode-style colour chip: prepend a swatch to any CSS colour inside inline
+// code — hex (#rgb … #rrggbbaa) and function-form (rgb/rgba, hsl/hsla, oklch,
+// oklab, lab, lch). The chip's background IS the value, so the browser renders
+// it. Runs on already-escaped text; the function-form char class excludes
+// quotes and angle brackets so the value can't break out of the style attribute.
+function colorSw(s) {
+  return s
+    .replace(
+      /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})\b/g,
+      (h) => `<span class="hexsw" style="background:${h}"></span>${h}`,
+    )
+    .replace(
+      /\b(?:rgba?|hsla?|oklch|oklab|lab|lch)\([0-9a-zA-Z.,%/ \t-]*\)/gi,
+      (c) => `<span class="hexsw" style="background:${c}"></span>${c}`,
+    );
 }
 // Parse a frontmatter block into ordered [key, value] rows. value is a
 // string, a {list:[...]} (block "- " or inline comma list), or a nested
@@ -3413,6 +5650,37 @@ function parseFrontmatter(fm) {
       }
       const key = kv[1];
       i++;
+      const val = kv[2];
+      // Flow-style array [ ... ] — inline (key: [a, b]) or spanning several
+      // lines under an empty value (key:\n  [\n a,\n b,\n ]). YAML allows both;
+      // gather through the closing "]" and split on commas into a list.
+      let flowFrom = -1;
+      const isFlowInline = val.startsWith("[");
+      if (isFlowInline) {
+        flowFrom = i;
+      } else if (val === "") {
+        let j = i;
+        while (j < lines.length && (!lines[j].trim() || /^\s*#/.test(lines[j])))
+          j++;
+        if (j < lines.length && lines[j].trimStart().startsWith("["))
+          flowFrom = j;
+      }
+      if (flowFrom >= 0) {
+        let buf = isFlowInline ? val : lines[flowFrom];
+        let k = isFlowInline ? i : flowFrom + 1;
+        while (!buf.includes("]") && k < lines.length) {
+          buf += " " + lines[k];
+          k++;
+        }
+        const inner = buf.slice(buf.indexOf("[") + 1, buf.lastIndexOf("]"));
+        const items = inner
+          .split(",")
+          .map((x) => x.trim().replace(/^"|"$/g, "").replace(/^'|'$/g, ""))
+          .filter(Boolean);
+        rows.push([key, { list: items }]);
+        i = k;
+        continue;
+      }
       if (kv[2] === "") {
         // look ahead past blanks/comments for a nested block or list
         let j = i;
@@ -3426,7 +5694,9 @@ function parseFrontmatter(fm) {
           while (i < lines.length) {
             const lm = /^(\s*)-\s+(.*)$/.exec(lines[i]);
             if (!lm || lm[1].length !== nind) break;
-            items.push(lm[2].trim().replace(/^["']|["']$/g, ""));
+            items.push(
+              lm[2].trim().replace(/^"|"$/g, "").replace(/^'|'$/g, ""),
+            );
             i++;
           }
           rows.push([key, { list: items }]);
@@ -3439,7 +5709,7 @@ function parseFrontmatter(fm) {
           continue;
         }
       }
-      rows.push([key, kv[2].replace(/^["']|["']$/g, "")]);
+      rows.push([key, kv[2].replace(/^"|"$/g, "").replace(/^'|'$/g, "")]);
     }
     return { rows, i };
   };
@@ -3469,14 +5739,14 @@ function linkifyBareUrls(s) {
   const anchors = [];
   const stashed = s.replace(/<a\b[^>]*>[\s\S]*?<\/a>/g, (m) => {
     anchors.push(m);
-    return ` ${anchors.length - 1} `;
+    return `\u0000${anchors.length - 1}\u0000`;
   });
   const linked = stashed.replace(/https?:\/\/[^\s<>"'`)\]]+/g, (u) => {
     const tail = (/[.,;:!?]+$/.exec(u) || [""])[0];
     const core = tail ? u.slice(0, -tail.length) : u;
     return `<a href="${core}" rel="noopener" target="_blank">${core}</a>${tail}`;
   });
-  return linked.replace(/ (\d+) /g, (_, i) => anchors[+i]);
+  return linked.replace(/\u0000(\d+)\u0000/g, (_, i) => anchors[+i]);
 }
 // Single recursive frontmatter value renderer, shared by the frontmatter
 // card AND the skill detail rail, so nested objects and lists render
@@ -3553,9 +5823,9 @@ function renderFrontmatterCard(fm, fmFile) {
 // Taxonomy chips + lifecycle status for the skill detail header — the
 // library already trains the eye to read these, so no frontmatter card.
 function detMetaHtml(s) {
-  const out = [];
-  if (s.domain) out.push(taxChip("domain", s.domain));
-  if (s.layer) out.push(taxChip("layer", s.layer));
+  const out = axisList()
+    .filter((a) => s[a.id])
+    .map((a) => taxChip(a.id, s[a.id]));
   out.push(statusBadge(s.status || "active", true));
   return `<div class="detmeta">${out.join("")}</div>`;
 }
@@ -3574,18 +5844,17 @@ function metaListValues(val) {
 // description in the main column. `sources` render as bare chips (no label);
 // a lint waiver renders as a soft note carrying its reason; anything else
 // falls back to a small labelled line. No divider, no "Metadata" header — it
-// reads as part of the document. name/description/domain/layer/status live
-// in the header and taxonomy chips already.
+// reads as part of the document. name/description/status and every declared
+// axis already live in the header and taxonomy chips.
 function skillMetaHtml(fm) {
   if (!fm) return "";
   const HIDE = new Set([
     "name",
     "description",
-    "domain",
-    "layer",
     "status",
     "icon",
     "icon-color",
+    ...axisList().map((a) => a.id),
   ]);
   const rows = parseFrontmatter(fm).filter(([k]) => !HIDE.has(k));
   if (!rows.length) return "";
@@ -3636,6 +5905,50 @@ function skillMetaHtml(fm) {
 }
 // GitHub-style heading slug: lowercase, drop punctuation, spaces → hyphens.
 // Keeps unicode letters/numbers so accented headings anchor correctly.
+// Emoji in vault documents are status markers, not decoration: ⚠️ is a warning,
+// 🔴 a red KR, ✅ an allowed destination. Render them with the dashboard's own
+// Lucide glyphs, tinted with the state tokens, so a document speaks the same
+// visual language as the rest of the UI instead of dropping in colour blobs
+// from whatever emoji font the platform happens to ship. Anything not listed
+// here falls through to that font unchanged.
+//
+// Code spans are left alone: inside `foo ⚠️ bar` the character is content.
+function emojiIcons(html) {
+  const MAP = {
+    "⚠": ["triangle-alert", "warn"],
+    "❗": ["circle-alert", "warn"],
+    "🚨": ["siren", "err"],
+    "✅": ["circle-check", "ok"],
+    "❌": ["circle-x", "err"],
+    "🔴": ["circle", "err", true],
+    "🟡": ["circle", "warn", true],
+    "🟢": ["circle", "ok", true],
+    // Filled and amber, not the outline: ⭐ in vault documents is a rating
+    // mark ("★★★★ replicabilità PMI"), and a hollow grey star reads as an
+    // empty rating — the opposite of what the author wrote.
+    "⭐": ["star", "warn", true],
+    "🎯": ["target", "dim"],
+    "🤖": ["bot", "dim"],
+    "📝": ["pencil", "dim"],
+    "🔧": ["wrench", "dim"],
+    "📊": ["chart-column", "dim"],
+    "💬": ["message-circle", "dim"],
+  };
+  // U+FE0F (variation selector) follows most of these in real documents.
+  const re = new RegExp("(" + Object.keys(MAP).join("|") + ")️?", "g");
+  const swap = (s) =>
+    s.replace(re, (_, ch) => {
+      const [name, state, filled] = MAP[ch];
+      return `<span class="gly ${state}"><svg viewBox="0 0 24 24" fill="${
+        filled ? "currentColor" : "none"
+      }" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${iconInner(name)}</svg></span>`;
+    });
+  return html
+    .split(/(<code>[\s\S]*?<\/code>)/)
+    .map((part, i) => (i % 2 ? part : swap(part)))
+    .join("");
+}
+
 function slugify(s) {
   return String(s)
     .trim()
@@ -3645,6 +5958,209 @@ function slugify(s) {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
 }
+// ---------- Mermaid: lazy-loaded, theme-synced diagram rendering ----------
+// The library is vendored at /mermaid.js (a devDependency copied into dist at
+// build, not a runtime dep) and pulled in only the first time a rendered doc
+// actually holds a mermaid fence. Every failure path — library unreachable,
+// diagram unparseable — falls back to the diagram's source, never a blank gap.
+let mermaidLib = null;
+let mermaidLoading = null;
+let mermaidSeq = 0;
+function isDarkTheme() {
+  const t = document.documentElement.getAttribute("data-theme");
+  if (t === "dark") return true;
+  if (t === "light") return false;
+  return matchMedia("(prefers-color-scheme: dark)").matches;
+}
+// Resolve app colour tokens to concrete rgb() for the current theme. mermaid
+// does colour maths (khroma) that chokes on oklch(), and this browser keeps
+// getComputedStyle().color in oklch() — so paint each token on a 1px canvas and
+// read the rasterised sRGB bytes back, which are always plain rgb.
+function tokenColors(names) {
+  const probe = document.createElement("span");
+  probe.style.cssText = "position:absolute;left:-9999px;visibility:hidden";
+  document.body.appendChild(probe);
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 1;
+  const cx = cv.getContext("2d", { willReadFrequently: true });
+  const out = {};
+  for (const n of names) {
+    probe.style.color = `var(${n})`;
+    cx.clearRect(0, 0, 1, 1);
+    cx.fillStyle = "#000";
+    cx.fillStyle = getComputedStyle(probe).color;
+    cx.fillRect(0, 0, 1, 1);
+    const d = cx.getImageData(0, 0, 1, 1).data;
+    out[n] = `rgb(${d[0]} ${d[1]} ${d[2]})`;
+  }
+  probe.remove();
+  return out;
+}
+// Diagrams are chrome, not a focal point (Restrained): nodes take the app's
+// raised surface with a hairline border, edges and text stay in the muted
+// tiers, and the brand accent is left out entirely. Colours are resolved per
+// theme so a flip re-renders to the right palette.
+function mermaidConfig() {
+  const c = tokenColors([
+    "--panel",
+    "--pane",
+    "--line",
+    "--prose",
+    "--fg",
+    "--dim",
+  ]);
+  return {
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: "base",
+    themeVariables: {
+      darkMode: isDarkTheme(),
+      fontFamily: 'Figtree, system-ui, -apple-system, "Segoe UI", sans-serif',
+      fontSize: "13px",
+      background: "transparent",
+      // In this low-contrast neutral system the boxes are read by their border,
+      // not their fill (fills sit a step apart at most) — so nodes take a subtle
+      // surface with a clearly-visible --dim outline and readable text.
+      primaryColor: c["--panel"],
+      mainBkg: c["--panel"],
+      secondaryColor: c["--pane"],
+      tertiaryColor: c["--pane"],
+      primaryBorderColor: c["--dim"],
+      nodeBorder: c["--dim"],
+      clusterBkg: c["--pane"],
+      clusterBorder: c["--line"],
+      lineColor: c["--dim"],
+      primaryTextColor: c["--fg"],
+      textColor: c["--prose"],
+      titleColor: c["--fg"],
+      edgeLabelBackground: c["--pane"],
+    },
+  };
+}
+function loadMermaid() {
+  if (mermaidLib) return Promise.resolve(mermaidLib);
+  if (mermaidLoading) return mermaidLoading;
+  mermaidLoading = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "/mermaid.js";
+    s.onload = () =>
+      window.mermaid
+        ? resolve((mermaidLib = window.mermaid))
+        : reject(new Error("mermaid global missing after load"));
+    s.onerror = () => reject(new Error("mermaid.js failed to load"));
+    document.head.appendChild(s);
+  });
+  return mermaidLoading;
+}
+// Replace a mermaid host (unmounted <pre> or rendered wrap) with its source
+// shown as code, plus a one-line reason. The last resort for any failure — the
+// reader always keeps the diagram text.
+function mermaidFallback(el, reason) {
+  const src = decodeURIComponent(el.getAttribute("data-mmd") || "");
+  const note = reason
+    ? `<div class="mermaid-err">Diagram not rendered — ${esc(reason)}</div>`
+    : "";
+  const box = document.createElement("div");
+  box.innerHTML = `${note}<pre class="code"><code>${highlight(src, null)}</code></pre>`;
+  el.replaceWith(box);
+}
+async function renderOneMermaid(lib, host) {
+  const src = decodeURIComponent(host.getAttribute("data-mmd") || "");
+  const id = "mmd-" + ++mermaidSeq;
+  try {
+    const { svg } = await lib.render(id, src);
+    const wrap = document.createElement("div");
+    wrap.className = "mermaid-wrap";
+    wrap.setAttribute("data-mmd", host.getAttribute("data-mmd"));
+    wrap.setAttribute("role", "img");
+    wrap.title = "Click to enlarge";
+    wrap.innerHTML = svg;
+    host.replaceWith(wrap);
+  } catch (err) {
+    // mermaid can leave a measuring node behind in the body on failure.
+    document.getElementById("d" + id)?.remove();
+    mermaidFallback(host, (err && err.message) || "invalid diagram");
+  }
+}
+// Render every unmounted mermaid block inside `root`. No-op (and no 2.8MB
+// fetch) when there are none, keeping the cost off pages without diagrams.
+async function mountMermaid(root) {
+  if (!root) return;
+  const hosts = [...root.querySelectorAll("pre.mermaid[data-mmd]")];
+  if (!hosts.length) return;
+  let lib;
+  try {
+    lib = await loadMermaid();
+  } catch (err) {
+    hosts.forEach((h) =>
+      mermaidFallback(h, (err && err.message) || "load failed"),
+    );
+    return;
+  }
+  lib.initialize(mermaidConfig());
+  for (const h of hosts) await renderOneMermaid(lib, h);
+}
+// Re-render mounted diagrams after a theme flip: mermaid bakes its palette into
+// the SVG at render time, so re-rendering from the retained source is the only
+// way to retheme. No-op before the library has ever loaded.
+async function restyleMermaid() {
+  if (!mermaidLib) return;
+  const wraps = [...document.querySelectorAll(".mermaid-wrap[data-mmd]")];
+  if (!wraps.length) return;
+  mermaidLib.initialize(mermaidConfig());
+  for (const w of wraps) {
+    const host = document.createElement("pre");
+    host.className = "mermaid";
+    host.setAttribute("data-mmd", w.getAttribute("data-mmd"));
+    w.replaceWith(host);
+    await renderOneMermaid(mermaidLib, host);
+  }
+}
+// Click a diagram to enlarge it in a scrollable overlay; click the overlay or
+// press Escape to close. Registered once at load.
+function openMermaidZoom(wrap) {
+  let ov = document.getElementById("mmd-zoom");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "mmd-zoom";
+    ov.innerHTML = `<div class="mmd-zoom-inner"></div>`;
+    ov.addEventListener("click", (e) => {
+      e.stopPropagation();
+      ov.classList.remove("on");
+    });
+    document.body.appendChild(ov);
+  }
+  const inner = ov.querySelector(".mmd-zoom-inner");
+  inner.innerHTML = wrap.innerHTML;
+  // mermaid emits width="100%" with no height; in the overlay's shrink-to-fit
+  // box that collapses to 0×0 (an empty window). Pin the clone to its viewBox
+  // size so it opens at natural resolution and the box scrolls when it's
+  // bigger than the screen.
+  const svg = inner.querySelector("svg");
+  const vb = svg && svg.viewBox && svg.viewBox.baseVal;
+  if (vb && vb.width) {
+    svg.style.width = Math.ceil(vb.width) + "px";
+    svg.style.height = Math.ceil(vb.height) + "px";
+    svg.style.maxWidth = "none";
+  }
+  ov.classList.add("on");
+}
+document.addEventListener("click", (e) => {
+  const w = e.target instanceof Element && e.target.closest(".mermaid-wrap");
+  if (w) openMermaidZoom(w);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const ov = document.getElementById("mmd-zoom");
+  if (!ov || !ov.classList.contains("on")) return;
+  ov.classList.remove("on");
+  // This listener is registered before the app's global Escape (which would
+  // otherwise leave the detail view), so stopping here keeps Escape scoped to
+  // just closing the zoom while it is open.
+  e.stopImmediatePropagation();
+  e.preventDefault();
+});
+
 function renderMd(src, showFm = true, fmFile = "", humanTitle = "") {
   // Per-render slug registry so duplicate headings get -1/-2 suffixes and
   // in-page anchor links resolve to a unique element id.
@@ -3665,27 +6181,41 @@ function renderMd(src, showFm = true, fmFile = "", humanTitle = "") {
     text = text.slice(m[0].length);
   }
   const inline = (s) =>
-    linkifyBareUrls(
-      s
-        .replace(/`([^`]+)`/g, (m, c) => "<code>" + hexSw(c) + "</code>")
-        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-        .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-        .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (all, t, u) =>
-          u.startsWith("#")
-            ? // in-page anchor: scroll within the viewer, never a new tab/reload
-              `<a href="${u}" class="docanchor">${t}</a>`
-            : /^(https?:\/\/|\.|\/)/.test(u)
-              ? `<a href="${u}" rel="noopener" target="_blank">${t}</a>`
-              : all,
-        ),
+    emojiIcons(
+      linkifyBareUrls(
+        s
+          .replace(/`([^`]+)`/g, (m, c) => "<code>" + colorSw(c) + "</code>")
+          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+          .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+          // Underscore emphasis only at word boundaries, per CommonMark: the
+          // vault is full of snake_case identifiers (replaced_by,
+          // test_gate_contract.py, lint.protectedTerms) and intra-word
+          // underscores must stay literal. A leading backslash escapes it.
+          .replace(
+            /(^|[^A-Za-z0-9_\\])__([^_\n]+)__(?![A-Za-z0-9_])/g,
+            "$1<strong>$2</strong>",
+          )
+          .replace(
+            /(^|[^A-Za-z0-9_\\])_([^_\n]+)_(?![A-Za-z0-9_])/g,
+            "$1<em>$2</em>",
+          )
+          .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (all, t, u) =>
+            u.startsWith("#")
+              ? // in-page anchor: scroll within the viewer, never a new tab/reload
+                `<a href="${u}" class="docanchor">${t}</a>`
+              : /^(https?:\/\/|\.|\/)/.test(u)
+                ? `<a href="${u}" rel="noopener" target="_blank">${t}</a>`
+                : all,
+          ),
+      ),
     );
   const lines = esc(text).split("\n");
   const rawLines = text.split("\n");
   let html = fm && showFm ? renderFrontmatterCard(fm, fmFile) : "";
   let inCode = false,
     codeLang = null,
+    codeFence = null,
     codeBuf = [],
-    inList = null,
     firstH1 = true,
     para = [];
   const flushPara = () => {
@@ -3694,30 +6224,76 @@ function renderMd(src, showFm = true, fmFile = "", humanTitle = "") {
       para = [];
     }
   };
-  const flushList = () => {
-    if (inList) {
-      html += `</${inList}>`;
-      inList = null;
-    }
-  };
+  // Cells split on unescaped pipes only: a `\|` inside a cell (typically a
+  // pipe within a code span, e.g. `ifconfig \| grep`) is literal content, not
+  // a column boundary. Splitting on it shifts every later cell one column
+  // right and cuts the code span in half.
   const splitRow = (row) => {
-    const c = row.split("|");
+    const c = [];
+    let cur = "";
+    for (let i = 0; i < row.length; i++) {
+      if (row[i] === "\\" && row[i + 1] === "|") {
+        cur += "|";
+        i++;
+      } else if (row[i] === "|") {
+        c.push(cur);
+        cur = "";
+      } else cur += row[i];
+    }
+    c.push(cur);
     if (c.length && c[0].trim() === "") c.shift();
     if (c.length && c[c.length - 1].trim() === "") c.pop();
     return c.map((x) => x.trim());
+  };
+  // Lists are parsed as a tree, not emitted item by item: indentation carries
+  // nesting, and a single `inList` flag cannot express depth. The flag version
+  // also closed the <ol> whenever a sub-list interrupted it, so the numbering
+  // restarted from 1 on the following item.
+  const ITEM = /^([ \t]*)(?:([-*])|(\d+)\.)\s+(.*)$/;
+  const indentOf = (s) => s.replace(/\t/g, "    ").length;
+  const renderItems = (nodes) => {
+    let out = "";
+    for (let i = 0; i < nodes.length;) {
+      const type = nodes[i].type;
+      const group = [];
+      while (i < nodes.length && nodes[i].type === type) group.push(nodes[i++]);
+      const start =
+        type === "ol" && group[0].num !== 1 ? ` start="${group[0].num}"` : "";
+      out += `<${type}${start}>`;
+      for (const n of group) {
+        const task = type === "ul" && /^\[([ xX])\]\s+(.*)$/.exec(n.text);
+        const cls = task
+          ? ` class="task${task[1].toLowerCase() === "x" ? " done" : ""}"`
+          : "";
+        out += `<li${cls}>${inline(task ? task[2] : n.text)}${
+          n.kids.length ? renderItems(n.kids) : ""
+        }</li>`;
+      }
+      out += `</${type}>`;
+    }
+    return out;
   };
   for (let li = 0; li < lines.length; li++) {
     const line = lines[li];
     if (line.startsWith("```")) {
       if (!inCode) {
         flushPara();
-        flushList();
         const fence = rawLines[li].slice(3).trim().toLowerCase();
-        codeLang = LANG_BY_FENCE[fence.split(/\s+/)[0]] || null;
+        codeFence = fence.split(/\s+/)[0];
+        codeLang = LANG_BY_FENCE[codeFence] || null;
         codeBuf = [];
         inCode = true;
       } else {
-        html += `<pre class="code"><code>${highlight(codeBuf.join("\n"), codeLang)}</code></pre>`;
+        const raw = codeBuf.join("\n");
+        // A ```mermaid fence becomes a diagram host: the source rides on
+        // data-mmd for mountMermaid() to render (and re-render on theme
+        // change), and the escaped source stays visible as the before-JS /
+        // load-failure fallback so the block is never blank. Source mode
+        // (renderPlain) still shows the raw fence, so nothing is hidden there.
+        if (codeFence === "mermaid")
+          html += `<pre class="mermaid" data-mmd="${encodeURIComponent(raw)}">${esc(raw)}</pre>`;
+        else
+          html += `<pre class="code"><code>${highlight(raw, codeLang)}</code></pre>`;
         inCode = false;
       }
       continue;
@@ -3735,7 +6311,6 @@ function renderMd(src, showFm = true, fmFile = "", humanTitle = "") {
       }
       if (block.length >= 2 && /^\s*\|[\s:|-]+\|?\s*$/.test(block[1])) {
         flushPara();
-        flushList();
         html +=
           "<table><tr>" +
           splitRow(block[0])
@@ -3757,13 +6332,12 @@ function renderMd(src, showFm = true, fmFile = "", humanTitle = "") {
     const h = /^(#{1,6})\s+(.*)$/.exec(line);
     if (h) {
       flushPara();
-      flushList();
       const lvl = h[1].length;
       const rawText = rawLines[li].replace(/^\s*#{1,6}\s+/, "");
       const id = headingId(rawText);
       const isFirstH1 = lvl === 1 && firstH1;
       if (isFirstH1) firstH1 = false;
-      // On SKILL.md the first H1 is the skill slug (e.g. midas-brand-system);
+      // On SKILL.md the first H1 is the skill slug (e.g. acme-brand-system);
       // render it humanized like the detail title, so the body doesn't lead
       // with a raw hyphenated slug that clashes with the header above.
       const inner =
@@ -3776,53 +6350,134 @@ function renderMd(src, showFm = true, fmFile = "", humanTitle = "") {
       html += `<h${lvl} id="${esc(id)}">${inner}</h${lvl}>`;
       continue;
     }
-    const ul = /^\s*[-*]\s+(.*)$/.exec(line),
-      ol = /^\s*\d+\.\s+(.*)$/.exec(line);
-    if (ul || ol) {
+    if (ITEM.test(line)) {
       flushPara();
-      const want = ul ? "ul" : "ol";
-      if (inList !== want) {
-        flushList();
-        html += `<${want}>`;
-        inList = want;
+      // Consume the whole contiguous list block. A blank line is swallowed
+      // when another item follows it, so a loose list (blank lines between
+      // steps) stays one list instead of restarting at 1.
+      const roots = [],
+        stack = [];
+      let j = li;
+      for (; j < lines.length; j++) {
+        if (lines[j].trim() === "") {
+          let k = j + 1;
+          while (k < lines.length && lines[k].trim() === "") k++;
+          if (k >= lines.length || !ITEM.test(lines[k])) break;
+          j = k - 1;
+          continue;
+        }
+        const m = ITEM.exec(lines[j]);
+        if (!m) break;
+        const node = {
+          indent: indentOf(m[1]),
+          type: m[2] ? "ul" : "ol",
+          num: m[2] ? 0 : parseInt(m[3], 10),
+          text: m[4],
+          kids: [],
+        };
+        while (stack.length && stack[stack.length - 1].indent >= node.indent)
+          stack.pop();
+        (stack.length ? stack[stack.length - 1].kids : roots).push(node);
+        stack.push(node);
       }
-      const item = (ul ?? ol)[1];
-      const task = ul && /^\[([ xX])\]\s+(.*)$/.exec(item);
-      if (task) {
-        html += `<li class="task${task[1].toLowerCase() === "x" ? " done" : ""}">${inline(task[2])}</li>`;
-      } else {
-        html += `<li>${inline(item)}</li>`;
-      }
+      html += renderItems(roots);
+      li = j - 1;
       continue;
     }
     if (/^\s*&gt;\s?/.test(line)) {
       flushPara();
-      flushList();
-      html += `<blockquote>${inline(line.replace(/^\s*&gt;\s?/, ""))}</blockquote>`;
+      // One blockquote for the whole contiguous `>` run, not one per line; a
+      // bare `>` line starts a new paragraph inside it.
+      const quoted = [[]];
+      let j = li;
+      for (; j < lines.length && /^\s*&gt;/.test(lines[j]); j++) {
+        const t = lines[j].replace(/^\s*&gt;\s?/, "").trim();
+        if (t === "") quoted.push([]);
+        else quoted[quoted.length - 1].push(t);
+      }
+      html +=
+        "<blockquote>" +
+        quoted
+          .filter((p) => p.length)
+          .map((p) => `<p>${inline(p.join(" "))}</p>`)
+          .join("") +
+        "</blockquote>";
+      li = j - 1;
       continue;
     }
     if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) {
       flushPara();
-      flushList();
       html += "<hr>";
       continue;
     }
     if (line.trim() === "") {
       flushPara();
-      flushList();
       continue;
     }
     para.push(line.trim());
   }
   flushPara();
-  flushList();
   if (inCode)
     html += `<pre class="code"><code>${highlight(codeBuf.join("\n"), codeLang)}</code></pre>`;
   return html;
 }
 
+/* ---------- appearance ---------- */
+// Three states, cycled by one button: the OS preference is a real choice, not
+// the absence of one, so it stays in the cycle instead of being the fallback
+// you land on by clearing a setting.
+const THEMES = ["system", "light", "dark"];
+const THEME_KEY = "skill-loom:theme";
+function nextTheme(cur) {
+  const i = THEMES.indexOf(cur);
+  return THEMES[(i < 0 ? 0 : i + 1) % THEMES.length];
+}
+// `system` removes the attribute entirely, so :root keeps `color-scheme:
+// light dark` and light-dark() follows the OS again.
+function applyTheme(t) {
+  const theme = THEMES.includes(t) ? t : "system";
+  const root = document.documentElement;
+  if (theme === "system") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", theme);
+  // The icon itself is picked by CSS from the three glyphs already in the
+  // markup, so it is correct at first paint; only the wording is set here.
+  const btn = $("#theme-btn");
+  if (btn) {
+    const label = { system: "System", light: "Light", dark: "Dark" }[theme];
+    btn.title = `Appearance: ${label} (click for ${
+      { system: "Light", light: "Dark", dark: "System" }[theme]
+    })`;
+    btn.setAttribute("aria-label", `Appearance: ${label}`);
+  }
+  return theme;
+}
+function initTheme() {
+  let stored = null;
+  try {
+    stored = localStorage.getItem(THEME_KEY);
+  } catch {
+    // private mode / storage disabled: fall back to the OS preference
+  }
+  applyTheme(stored);
+}
+function cycleTheme() {
+  const cur = document.documentElement.getAttribute("data-theme") || "system";
+  const next = applyTheme(nextTheme(cur));
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    // nothing to persist to; the choice still holds for this page
+  }
+  // Diagrams bake their palette in at render time, so retheme any on screen.
+  restyleMermaid();
+}
+
 /* ---------- events + boot ---------- */
 document.addEventListener("click", (e) => {
+  if (e.target instanceof Element && e.target.closest("#theme-btn")) {
+    cycleTheme();
+    return;
+  }
   if (suppressClickOnce) {
     suppressClickOnce = false;
     e.preventDefault();
@@ -3861,7 +6516,7 @@ document.addEventListener("click", (e) => {
   const t =
     e.target instanceof Element
       ? e.target.closest(
-          "[data-go],[data-skill],[data-file],[data-mode],[data-hash-open],[data-toggle],[data-consumer],[data-inplace],[data-restore],[data-remote],[data-coming],[data-nameadd],[data-namedel],[data-runtimeadd],[data-runtimepreset]",
+          "[data-go],[data-skill],[data-file],[data-gallery],[data-galfile],[data-mode],[data-hash-open],[data-toggle],[data-consumer],[data-inplace],[data-restore],[data-remote],[data-coming],[data-nameadd],[data-namedel],[data-runtimeadd],[data-runtimepreset],[data-linkall],[data-source]",
         )
       : null;
   if (!t) {
@@ -3881,13 +6536,27 @@ document.addEventListener("click", (e) => {
     // curView check would miss this case.
     if (t.id === "nav-config") configPane = "rules";
     go(t.dataset.go);
-  } else if (t.dataset.skill) go("detail", t.dataset.skill);
-  else if (t.dataset.file) selectFile(t.dataset.file);
-  else if (t.dataset.mode) setMode(t.dataset.mode);
+  } else if (t.dataset.skill) {
+    // In a read-only source the group is half the identity: carry the clicked
+    // row's group over, or the detail would ask for a name the server cannot
+    // place. The vault has no groups, so this is a no-op there.
+    if (curSource !== "personal") srcGroup = t.dataset.group || "";
+    go("detail", t.dataset.skill);
+  } else if (t.dataset.file) selectFile(t.dataset.file);
+  else if (t.dataset.gallery) openGallery();
+  // A tile opens the picture over the page, not the file behind it: the grid is
+  // there to be looked through, and the ring it opens is every image the
+  // gallery is currently showing, in the order it shows them.
+  else if (t.dataset.galfile) {
+    const paths = galleryOrder(galleryFiles());
+    openLightbox(paths, Math.max(0, paths.indexOf(t.dataset.galfile)));
+  } else if (t.dataset.mode) setMode(t.dataset.mode);
   else if (t.dataset.hashOpen) showCommit(t.dataset.hashOpen, t.dataset.subj);
   else if (t.dataset.toggle) toggleRuntime(t.dataset.toggle, t);
   else if (t.dataset.consumer) toggleConsumer(t.dataset.consumer, t);
   else if (t.dataset.inplace) toggleInplace(t.dataset.inplace, t);
+  else if (t.dataset.linkall) linkEverywhere(t.dataset.linkall);
+  else if (t.dataset.source) selectSource(t.dataset.source);
   else if (t.dataset.restore) doRestore(t.dataset.restore);
   else if (t.dataset.remote) doRemote();
   else if (t.dataset.runtimeadd) doRuntimeAdd();
@@ -3984,17 +6653,20 @@ document.addEventListener("keydown", (e) => {
 // ── Keyboard shortcuts + help overlay ────────────────────────────────
 const SHORTCUTS = [
   ["?", "Toggle this help"],
-  ["F", "Focus search"],
-  ["1 · 2 · 3", "My skills · Status · Config"],
+  ["f", "Focus search"],
+  ["⌥ 1 · 2 · 3", "My skills · Status · Config"],
+  ["1…9", "Jump to source N"],
   ["n", "New skill"],
   ["← ↑ ↓ →", "Select a skill (library) · navigate (detail)"],
   ["↵ Enter", "Open selected skill (library)"],
+  ["⌥ ← →", "Previous / next source (library)"],
   ["v", "Toggle Rendered / Source"],
-  ["g", "Toggle grid / list (library)"],
-  ["d", "Cycle grouping: none / domain / layer"],
+  ["g", "Cycle grid / table / map (library)"],
+  ["d", "Cycle grouping: none / each declared axis"],
   ["a", "Toggle active / archived skills"],
-  ["e", "Rename skill"],
+  ["s", "Cycle the status filter: all / each status in the set"],
   ["r", "Refresh from the vault"],
+  ["t", "Cycle appearance: system / light / dark"],
   ["Esc", "Back · close · clear search"],
 ];
 let helpOpen = false;
@@ -4042,7 +6714,16 @@ document.addEventListener("keydown", (e) => {
       }
       return el.blur();
     }
-    if (curView === "detail") return void go("skills");
+    // Leaving a detail returns to the list it was opened from. The archive is
+    // Personal's own corner: reading a source while the flag rides along must
+    // still land on that source's list, not on the vault's archive.
+    if (curView === "detail")
+      return void go(
+        curSource === "personal" && libArchived ? "archived" : "skills",
+      );
+    // Same as the form's own Cancel (no confirm): a focused field blurs on the
+    // first Escape, so leaving still takes a deliberate second press.
+    if (curView === "new") return void go("skills");
     if (curView === "skills" || curView === "archived") {
       // Escape resets the search even when the field isn't focused (e.g.
       // after typing then clicking away), before it clears any selection.
@@ -4089,52 +6770,126 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     return;
   }
-  if (helpOpen || typing || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === "f" || e.key === "F") {
+  // Alt+Left/Right is the chip band's keyboard twin, so it answers where the
+  // band is: the lists. A detail has no band to move, and no skill in the next
+  // source corresponds to the open one. Must run before the modifier guard
+  // below, which drops Alt.
+  if (
+    e.altKey &&
+    !typing &&
+    sources.length > 1 &&
+    (e.key === "ArrowLeft" || e.key === "ArrowRight") &&
+    (curView === "skills" || curView === "archived")
+  ) {
     e.preventDefault();
-    if (curView !== "skills") go("skills");
-    setTimeout(() => $("#search")?.focus(), 0);
+    const i = sources.findIndex((s) => s.id === curSource);
+    const ni = Math.min(
+      sources.length - 1,
+      Math.max(0, i + (e.key === "ArrowLeft" ? -1 : 1)),
+    );
+    if (ni !== i) selectSource(sources[ni].id);
     return;
   }
-  if (e.key === "1") return goSkillsTab();
-  if (e.key === "2") return void go("status");
-  if (e.key === "3") {
-    // Parity with clicking the Config nav: land on the Rules pane,
-    // not a remembered pane (go()'s own reset is guarded by
-    // curView !== config, which is false while already in Config).
-    configPane = "rules";
-    return void go("config");
+  // Alt+1/2/3 are the three destinations in the top nav; bare digits below
+  // belong to the source band. The band is the busier switch, so it gets the
+  // unmodified keys. e.code, not e.key: on macOS Option+1 types "¡".
+  if (e.altKey && !typing) {
+    const m = /^Digit([1-3])$/.exec(e.code || "");
+    if (m) {
+      e.preventDefault();
+      if (m[1] === "1") return goSkillsTab();
+      if (m[1] === "2") return void go("status");
+      configPane = "rules";
+      return void go("config");
+    }
   }
-  if (e.key === "a" && (curView === "skills" || curView === "archived")) {
+  if (helpOpen || typing || e.metaKey || e.ctrlKey || e.altKey) return;
+  // The archive is the library over a different set (curView is "archived"
+  // there), so it answers to the same shortcuts.
+  const inLib = curView === "skills" || curView === "archived";
+  if (e.key === "f" || e.key === "F") {
+    e.preventDefault();
+    if (!inLib) go("skills");
+    // Focus AND select: a second F (or focusing with a query already typed)
+    // selects the existing text so the next keystroke replaces it.
+    setTimeout(() => {
+      const s = $("#search");
+      if (s) {
+        s.focus();
+        s.select();
+      }
+    }, 0);
+    return;
+  }
+  // Bare 1..9 selects the Nth source. It works from anywhere: pressing it
+  // outside the library moves there first, so the key means the same thing in
+  // every view instead of dying in two of the three.
+  const sn = /^[1-9]$/.test(e.key) ? sources[Number(e.key) - 1] : null;
+  if (sn) {
+    e.preventDefault();
+    if (curView !== "skills" && curView !== "archived") go("skills");
+    if (sn.id !== curSource) selectSource(sn.id);
+    return;
+  }
+  if (
+    e.key === "a" &&
+    curSource === "personal" &&
+    (curView === "skills" || curView === "archived")
+  ) {
     e.preventDefault();
     const t = archiveToggleTarget(libArchived);
-    libArchived = t.libArchived;
+    setLibArchived(t.libArchived);
     return void go(t.view);
   }
   if (e.key === "r") {
     e.preventDefault();
-    return void loadState();
+    return void doRefresh();
   }
-  if (curView === "skills") {
-    if (e.key === "n") return void go("new");
+  if (e.key === "t") {
+    e.preventDefault();
+    return void cycleTheme();
+  }
+  if (inLib && curSource !== "personal") {
+    if (e.key.startsWith("Arrow")) {
+      if (!srcListNav(e.key)) return;
+      e.preventDefault();
+      return;
+    }
+    if (e.key === "Enter" && srcCursor) {
+      srcGroup = srcCursor.group;
+      return void go("detail", srcCursor.name);
+    }
+    return; // read-only source: no new / grid / group / archive shortcuts
+  }
+  if (inLib) {
+    // Creating is a live-vault action: the archive does not offer it.
+    if (e.key === "n" && !libArchived) return void go("new");
     if (e.key === "g") {
       e.preventDefault();
-      libView = libView === "grid" ? "list" : "grid";
-      if (libView === "grid" && sortMode === "updated") {
+      // The archive has no map to cycle into: extraction skips `.archive`, and
+      // the view toggle does not offer it there either.
+      const modes = libArchived ? ["grid", "list"] : ["grid", "list", "map"];
+      const at = modes.indexOf(libView);
+      setLibView(modes[(at + 1) % modes.length]);
+      // The ledger's "updated" sort has no meaning outside the table.
+      if (libView !== "list" && sortMode === "updated") {
         sortMode = "name";
         sortDir = 1;
       }
-      return void renderLibrary();
+      return void repaintLibrary();
     }
     if (e.key === "d") {
       e.preventDefault();
-      groupAxis =
-        groupAxis === "none"
-          ? "domain"
-          : groupAxis === "domain"
-            ? "layer"
-            : "none";
-      return void renderLibrary();
+      // ["none", ...declared axis ids]; a groupAxis a reload (r) no longer
+      // declares falls back to "none" instead of getting stuck past the end.
+      const cycle = ["none", ...axisList().map((a) => a.id)];
+      const i = cycle.indexOf(groupAxis);
+      setGroupAxis(cycle[(i + 1) % cycle.length] ?? "none");
+      return void repaintLibrary();
+    }
+    if (e.key === "s") {
+      e.preventDefault();
+      return void cycleStatusFilter();
     }
     if (e.key.startsWith("Arrow")) {
       e.preventDefault();
@@ -4157,6 +6912,8 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (curView !== "detail") return;
+  // Rendered/Source toggle: shown for Markdown in both the vault and a
+  // read-only source, so it stays above the source branch below.
   if (e.key === "v") {
     if (!$("#seg")?.classList.contains("vhide")) {
       e.preventDefault();
@@ -4164,9 +6921,38 @@ document.addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (e.key === "e") {
-    e.preventDefault();
-    return doRename(current);
+  if (curSource !== "personal") {
+    // Read-only source detail: Up/Down move through files, Left/Right through
+    // the source's sibling skills. Both lists are read from the rail DOM.
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      // Rows that carry a file, so the gallery row above them does not sit in
+      // the ring as a step that goes nowhere.
+      const files = [
+        ...document.querySelectorAll("#srcfilelist .file[data-srcfile]"),
+      ].map((b) => b.dataset.srcfile);
+      const i = files.indexOf(currentFile);
+      if (i < 0) return;
+      const to = e.key === "ArrowUp" ? files[i - 1] : files[i + 1];
+      if (to) {
+        e.preventDefault();
+        srcSelectFile(to);
+      }
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      // The whole source in list order, not the rail: the rail holds one
+      // collection, and stopping at its last skill would trap you there. The
+      // vault's detail does the same through libraryOrder().
+      const i = srcOrder.findIndex(
+        (o) => o.name === (srcSkill && srcSkill.name) && o.group === srcGroup,
+      );
+      if (i < 0) return;
+      const to = e.key === "ArrowLeft" ? srcOrder[i - 1] : srcOrder[i + 1];
+      if (to) {
+        e.preventDefault();
+        srcGroup = to.group;
+        go("detail", to.name);
+      }
+    }
+    return;
   }
   const skillKey = e.key === "ArrowLeft" || e.key === "ArrowRight";
   const fileKey = e.key === "ArrowUp" || e.key === "ArrowDown";
@@ -4180,9 +6966,9 @@ document.addEventListener("keydown", (e) => {
       go("detail", to);
     }
   } else if (fileKey) {
-    const files = [...document.querySelectorAll("#filelist .file")].map(
-      (b) => b.dataset.file,
-    );
+    const files = [
+      ...document.querySelectorAll("#filelist .file[data-file]"),
+    ].map((b) => b.dataset.file);
     const i = files.indexOf(currentFile);
     if (i < 0) return;
     const to = e.key === "ArrowUp" ? files[i - 1] : files[i + 1];
@@ -4192,6 +6978,22 @@ document.addEventListener("keydown", (e) => {
     }
   }
 });
+async function linkEverywhere(name) {
+  const nm = name ?? current;
+  const r = await api("/api/link-skill-everywhere", { name: nm, apply: true });
+  if (!r.ok) return toast(r.data.error || "failed");
+  const n = (r.data.actions || []).length;
+  toast(n ? `Linked into ${n} runtime${n === 1 ? "" : "s"}` : "Already linked");
+  await loadState();
+  if (curView === "detail") return void go("detail", nm);
+  // Status view: swap only this row in place, so the scroll position is kept
+  // instead of jumping to the top on a full re-render.
+  const row = document.querySelector(`tr[data-cov="${nm}"]`);
+  const skill = (state.skills || []).find((s) => s.name === nm);
+  if (row && skill)
+    row.outerHTML = coverageRow(skill, Object.keys(state.consumers), true);
+  else render();
+}
 async function toggleRuntime(consumer, el) {
   const on = !el.classList.contains("on");
   const r = await api("/api/link-toggle", {
@@ -4267,15 +7069,503 @@ async function doRemote() {
   sync = (await api("/api/sync")).data;
   render();
 }
-$("#refresh").addEventListener("click", () => loadState());
+$("#refresh").addEventListener("click", () => doRefresh());
 $("#help-btn")?.addEventListener("click", openHelp);
 
 let lastStateAt = 0;
+// ── graph-freshness badge ────────────────────────────────────────────
+const FRESH_COPY_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
+const FRESH_CHECK_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`;
+let freshData = null;
+// Whether the collapsed "N families done" line is expanded. Module state, not
+// DOM state: the popover repaints every 5s while a run is live, and a class on
+// the rebuilt markup would fold the list back mid-read.
+let freshDoneOpen = false;
+let freshnessPoll = null;
+
+// Relative "updated X ago". Empty string for a missing/unparseable timestamp.
+function agoLabel(iso) {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 90) return "just now";
+  const m = s / 60;
+  if (m < 90) return `${Math.round(m)}m ago`;
+  const h = m / 60;
+  if (h < 36) return `${Math.round(h)}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+// Clipboard with a legacy fallback: the dashboard can bind a non-local host over
+// http, where navigator.clipboard is undefined (not a secure context).
+function copyText(text) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(
+      () => toast("Command copied"),
+      () => toast("Copy failed"),
+    );
+    return;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  try {
+    ta.select();
+    document.execCommand("copy");
+    toast("Command copied");
+  } catch {
+    toast("Copy failed");
+  } finally {
+    document.body.removeChild(ta);
+  }
+}
+
+// The pill's colour + label. null -> no pill (no graph). Colour priority is
+// stuck > pending > behind > fresh; "behind" alone stays neutral.
+function freshSummary(d) {
+  if (!d || !d.hasGraph) return null;
+  const stuck = d.pending.filter((f) => f.state === "stuck").length;
+  const pend = d.pending.filter((f) => f.state === "pending").length;
+  const k = d.commitsBehind;
+  const running =
+    d.run && (d.run.state === "extracting" || d.run.state === "applying");
+  const stale = (d.stale || []).length;
+  const behind = stale
+    ? ` · ${stale} stale`
+    : typeof k === "number" && k > 0
+      ? ` · ${k} behind`
+      : "";
+  if (stuck)
+    return {
+      cls: "bad",
+      label: `${stuck} stuck`,
+      behind: pend ? ` · ${pend} pending` : behind,
+    };
+  if (running) {
+    // In the cross pass "Refreshing 6/6" is a contradiction — six of six done,
+    // still running. The pill names the phase the panel names.
+    const cross = liveCross(d.run);
+    return {
+      cls: "warn",
+      label: cross
+        ? `Linking ${cross.done}/${cross.total}`
+        : `Refreshing ${d.run.completed}/${d.run.total}`,
+      behind,
+    };
+  }
+  if (d.armedAt) {
+    // The quiet window the post-commit hook waits out is 60s, so the old
+    // "minutes above 60, a bare 'Refresh due' below" put every real wait in
+    // the branch without a number: the countdown could not appear at all.
+    // One threshold, both sides carry the figure, and zero says it is going
+    // rather than freezing on a number that stopped falling.
+    const wait = Math.max(0, d.armedAt - Math.floor(Date.now() / 1000));
+    return {
+      cls: "warn",
+      label: !wait
+        ? "Starting now"
+        : wait >= 60
+          ? `Refresh in ${Math.ceil(wait / 60)}m`
+          : `Refresh in ${wait}s`,
+      behind,
+    };
+  }
+  if (pend) return { cls: "warn", label: `${pend} pending`, behind };
+  if (!d.freshThroughCommit && !d.updatedAt)
+    return { cls: "", label: "Graph", behind }; // graph present, no status yet
+  if (typeof k === "number" && k > 0)
+    return { cls: "", label: "Graph", behind };
+  if (k === 0) return { cls: "ok", label: "Graph fresh", behind: "" };
+  // commitsBehind === null with a fresh sha present: the sha isn't an ancestor
+  // of HEAD (rebased/rewritten), so freshness can't be verified — never green.
+  return { cls: "", label: "Graph", behind: "" };
+}
+
+function freshPollDelay(d) {
+  const running =
+    d?.run && (d.run.state === "extracting" || d.run.state === "applying");
+  if (running) return 5000;
+  // Armato: si continua a guardare, altrimenti la finestra di quiete scade e il
+  // pannello resta fermo su "fra 2m" fino al prossimo caricamento.
+  return d?.armedAt ? 10000 : null;
+}
+
+function famRowHtml(f) {
+  const badgeCls = f.state === "stuck" ? "bad" : "warn";
+  const failTxt = `${f.fails} fail${f.fails === 1 ? "" : "s"}`;
+  const extra =
+    f.state === "stuck"
+      ? `<div class="fp-cmd"><code>${esc(f.command)}</code><button class="fresh-copy" data-cmd="${esc(f.command)}" title="Copy command" aria-label="Copy command">${FRESH_COPY_SVG}</button></div>`
+      : `<div class="fp-auto">auto-retrying on the next refresh</div>`;
+  return (
+    `<div class="fp-fam"><div class="fp-fam-top">` +
+    `<span class="fp-name">${esc(f.family)}</span>` +
+    `<span class="fp-badge ${badgeCls}">${esc(f.state)} · ${esc(failTxt)}</span></div>` +
+    (f.reason ? `<div class="fp-reason">${esc(f.reason)}</div>` : "") +
+    extra +
+    `</div>`
+  );
+}
+
+// The run's progress bar. It has to count what the headline counts: the line
+// right above it reads `run.completed` of `run.total`, so a bar driven by a
+// different rule (family_state alone drops entries the parser doesn't know, and
+// a family that finished extraction sits in "applying", not "done") renders a
+// percentage that contradicts the sentence eight pixels away. Two tones because
+// the run has two phases: extraction fills the bar, the serial apply turns it
+// green, reusing the dot colours the rows already carry.
+// The cross pass, when the status file reports one still in progress.
+function liveCross(run) {
+  const c = run && run.cross;
+  return c && c.total > 0 && c.done < c.total ? c : null;
+}
+function runBarHtml(run) {
+  if (!run) return "";
+  const total = run.total || (run.familyState ? run.familyState.length : 0);
+  if (!total) return "";
+  // The two layers are stacked, not concatenated, so each carries its share of
+  // the WHOLE bar: green (confirmed) paints over the teal (extracted) rather
+  // than continuing it.
+  const frac = (n, of) => (Math.round((n / of) * 1000) / 1000).toString();
+  // Cross pass: extraction is through, so the teal base is full and the green
+  // sweep tracks the per-skill confirmations. Same two layers, same colours —
+  // the second phase reads as the bar filling in, not as a new element. Without
+  // this the bar sat at 100% green while the panel said 2 of 11.
+  const cross = liveCross(run);
+  if (cross)
+    return (
+      `<div class="fp-bar"><i style="transform:scaleX(1)"></i>` +
+      `<i class="done" style="transform:scaleX(${frac(cross.done, cross.total)})"></i></div>`
+    );
+  const done = (run.familyState || []).filter((f) => f.state === "done").length;
+  const completed = Math.min(run.completed, total);
+  return (
+    `<div class="fp-bar">` +
+    (completed
+      ? `<i style="transform:scaleX(${frac(completed, total)})"></i>`
+      : "") +
+    (done
+      ? `<i class="done" style="transform:scaleX(${frac(done, total)})"></i>`
+      : "") +
+    `</div>`
+  );
+}
+
+// One row per family in the run. A counter could only say "2 of 5"; two done
+// and one failed reads exactly like one of each until every family carries its
+// own state, which is the whole reason run.family_state exists.
+function runFamilyRowsHtml(run, pendingNames) {
+  if (!run || !run.familyState || !run.familyState.length) return "";
+  // A family that failed in THIS run and sits in the retry queue was rendered
+  // twice — a red block up here with reason+command, a yellow card below with
+  // the same reason and the retry note. Eight cards for four facts. The run row
+  // stays (the run log must account for every family), but it collapses to one
+  // line pointing at the queue, which owns the reason and the retry story.
+  const queued = pendingNames || new Set();
+  // A running family has no duration yet, only a start: show how long it has
+  // been going, or the panel says "running" and nothing else.
+  const secs = (f) => {
+    // A sub-second duration is a checkpoint restore, not an extraction: name
+    // the cause instead of printing the "0s" it rounds to.
+    if (f.seconds != null)
+      return f.seconds < 1 ? ` · cache` : ` · ${Math.round(f.seconds)}s`;
+    const t = f.startedAt ? Date.parse(f.startedAt) : NaN;
+    if (!Number.isFinite(t)) return "";
+    return ` · ${Math.max(0, Math.round((Date.now() - t) / 1000))}s`;
+  };
+  const rowHtml = (f) => {
+    const label =
+      f.state === "done"
+        ? `done${secs(f)}`
+        : f.state === "running"
+          ? `running${secs(f)}`
+          : f.state === "applying"
+            ? // Extraction is through; the serial validation and replace has
+              // not run yet, so the family is neither done nor still working.
+              `extracted${secs(f)}`
+            : f.state === "failed"
+              ? queued.has(f.family)
+                ? "failed · in retry queue below"
+                : "failed"
+              : "queued";
+    const why =
+      f.state === "failed" && !queued.has(f.family)
+        ? (f.reason ? `<div class="fp-reason">${esc(f.reason)}</div>` : "") +
+          `<div class="fp-cmd"><code>graphify-refresh.py ${esc(f.family)}</code><button class="fresh-copy" data-cmd="graphify-refresh.py ${esc(f.family)}" title="Copy command" aria-label="Copy command">${FRESH_COPY_SVG}</button></div>`
+        : "";
+    return (
+      `<div class="fp-row ${f.state}"><span class="d"></span>` +
+      `<span class="fp-name">${esc(f.family)}</span>` +
+      `<span class="fp-sub">${f.skills} skill${f.skills === 1 ? "" : "s"}</span>` +
+      `<span class="fp-state">${esc(label)}</span></div>` +
+      why
+    );
+  };
+  // Finished families are banked work: past three of them they fold into one
+  // openable line, so the part of the run still moving keeps the panel. The
+  // threshold exists because a fold standing in for one or two rows costs a
+  // click and saves nothing. The fold line sits where the done block starts —
+  // the sort puts done last — so opening it reveals rows below the toggle, not
+  // above it.
+  const done = run.familyState.filter((f) => f.state === "done");
+  const live = run.familyState.filter((f) => f.state !== "done");
+  const folding = done.length >= 3;
+  const doneSkills = done.reduce((n, f) => n + f.skills, 0);
+  const foldRow = folding
+    ? `<button class="fp-collapse" data-fresh-done aria-expanded="${freshDoneOpen}"><span class="d"></span>` +
+      `${done.length} families done` +
+      `<span class="n">${doneSkills} skill${doneSkills === 1 ? "" : "s"}</span>` +
+      `<span class="cv">${freshDoneOpen ? "▾" : "▸"}</span></button>`
+    : "";
+  const rows = folding
+    ? live.map(rowHtml).join("") +
+      foldRow +
+      (freshDoneOpen ? done.map(rowHtml).join("") : "")
+    : run.familyState.map(rowHtml).join("");
+  // During the cross pass the things moving are the skills being confirmed:
+  // each gets a live row in the run's own language. The pass runs several at a
+  // time, so one row would hide the others. The status file carries only the
+  // names, no start time, so a row says what and not how long.
+  const cross = liveCross(run);
+  const crossNames = (cross && cross.current) || [];
+  const crossRow = cross
+    ? (crossNames.length ? crossNames : ["…"])
+        .map(
+          (name) =>
+            `<div class="fp-row running"><span class="d"></span>` +
+            `<span class="fp-name">${esc(name)}</span>` +
+            `<span class="fp-state">linking</span></div>`,
+        )
+        .join("")
+    : "";
+  return `<div class="fp-sec">This run</div>` + crossRow + rows;
+}
+
+// Families whose markdown moved after the graph was built. Read from git, so
+// they are known before any run picks them up.
+function staleRowsHtml(stale) {
+  if (!stale || !stale.length) return "";
+  const rows = stale
+    .map(
+      (s) =>
+        `<div class="fp-row stale"><span class="d"></span>` +
+        `<span class="fp-name">${esc(s.family)}</span>` +
+        `<span class="fp-sub">${esc(s.skills.join(", "))}</span>` +
+        `<span class="fp-state">${s.commits} commit${s.commits === 1 ? "" : "s"} behind</span></div>`,
+    )
+    .join("");
+  return `<div class="fp-sec">Stale, not picked up yet</div>` + rows;
+}
+
+function freshPopHtml(d) {
+  if (!d || !d.hasGraph) return "";
+  const stuck = d.pending.filter((f) => f.state === "stuck").length;
+  const pend = d.pending.filter((f) => f.state === "pending").length;
+  const running =
+    d.run && (d.run.state === "extracting" || d.run.state === "applying");
+  const when = agoLabel(d.updatedAt);
+  const head =
+    `<div class="fp-head"><h3>Graph freshness</h3>` +
+    (when ? `<span class="fp-when">updated ${esc(when)}</span>` : "") +
+    `</div>`;
+  const k = d.commitsBehind;
+  const behindLine =
+    typeof k === "number" && k > 0
+      ? `<div class="fp-behind">Graph is <b>${k} commit${k === 1 ? "" : "s"} behind</b> HEAD.</div>`
+      : "";
+  let statusCls, statusText;
+  if (stuck) {
+    statusCls = "bad";
+    statusText = `${stuck} famil${stuck === 1 ? "y" : "ies"} stuck`;
+  } else if (running) {
+    statusCls = "warn";
+    // After extraction the run confirms cross-family links one touched skill at
+    // a time, sequentially — on a full-vault pass it outlives the extraction.
+    // Without naming the phase the panel read "Refreshing 47 of 47" with every
+    // family done and no visible reason to still be running.
+    const cross = d.run.cross;
+    // The current skill lives in its own run row now (see runFamilyRowsHtml),
+    // so the status line carries the count alone — the same name twice, eight
+    // pixels apart, said nothing extra.
+    statusText =
+      cross && cross.total > 0 && cross.done < cross.total
+        ? `Cross-linking ${cross.done} of ${cross.total} skills`
+        : `Refreshing ${d.run.completed} of ${d.run.total} families`;
+  } else if (pend) {
+    statusCls = "warn";
+    statusText = `${pend} famil${pend === 1 ? "y" : "ies"} pending`;
+  } else if (!d.freshThroughCommit && !d.updatedAt) {
+    statusCls = "off";
+    statusText = "Freshness unknown";
+  } else if (d.armedAt) {
+    statusCls = "warn";
+    statusText = "Refresh armed";
+  } else if (k === 0) {
+    statusCls = "ok";
+    statusText = "Fresh";
+  } else if (typeof k === "number" && k > 0) {
+    statusCls = "ok";
+    statusText = "No problems";
+  } else {
+    statusCls = "off";
+    statusText = "Freshness unverified";
+  }
+  const status = `<div class="fp-status ${statusCls}"><span class="d"></span>${esc(statusText)}</div>`;
+  const runLine = running
+    ? `<div class="fp-behind">${d.run.workers} worker${d.run.workers === 1 ? "" : "s"}` +
+      (d.run.lastCompleted
+        ? ` · last: <b>${esc(d.run.lastCompleted)}</b>`
+        : "") +
+      (d.run.lastProvider ? ` via ${esc(d.run.lastProvider)}` : "") +
+      `</div>`
+    : "";
+  const armed = d.armedAt
+    ? `<div class="fp-behind">A refresh is armed and starts in <b id="fp-armed">${Math.max(0, Math.ceil(d.armedAt - Date.now() / 1000))}s</b>. The hook waits out a quiet window so a burst of commits pays one run.</div>`
+    : "";
+  const bar = runBarHtml(d.run);
+  const famRows = runFamilyRowsHtml(
+    d.run,
+    new Set(d.pending.map((f) => f.family)),
+  );
+  const staleRows = staleRowsHtml(d.stale);
+  let body;
+  if (d.pending.length === 0) {
+    const line = running
+      ? "Family extraction is running; valid chunks are checkpointed before the serial graph update."
+      : statusText === "Freshness unknown"
+        ? "The graph exists but the refresh pipeline hasn't reported a status yet."
+        : statusText === "Freshness unverified"
+          ? "The graph was built on a commit that isn't in the current history (rebased or rewritten), so its freshness can't be verified."
+          : typeof k === "number" && k > 0
+            ? "No degenerate or failed families. Being a few commits behind is normal between refreshes."
+            : "The knowledge graph is up to date through the latest commit.";
+    const okCls = "fp-ok" + (statusCls === "off" ? " muted" : "");
+    body = `<div class="${okCls}"><span class="ic">${FRESH_CHECK_SVG}</span><span>${line}</span></div>`;
+  } else {
+    body = `<div class="fp-div"></div>` + d.pending.map(famRowHtml).join("");
+  }
+  // The per-family rows replace the one-line run summary when the pipeline
+  // writes them; older status files still get the counter.
+  // With per-family rows on screen the generic "extraction is running" box
+  // repeats what the rows already say; the pending block still earns its place.
+  const explain = famRows && d.pending.length === 0 ? "" : body;
+  // A 47-family run is taller than any viewport, so the list is the only part
+  // that scrolls: the status, the bar and the run summary stay pinned, because
+  // scrolling away the one line that says what the panel is about is worse than
+  // the height. The scroller is a flex child (see .fp-scroll) rather than the
+  // popover itself — a sticky header inside a scrolling popover lets rows slide
+  // through its padding.
+  // Only lists scroll. The one-line "nothing to report" note is not a list, so
+  // it stays with the status it belongs to rather than becoming a one-item
+  // scroll region.
+  const lists = d.pending.length ? explain : "";
+  const note = d.pending.length ? "" : explain;
+  const scroller = famRows + lists + staleRows;
+  return (
+    head +
+    status +
+    behindLine +
+    // The armed sentence was built and then dropped on the floor: the panel
+    // said "Refresh armed" and never said when, which is the same gap the pill
+    // had. It belongs under the status it explains.
+    armed +
+    (famRows ? bar : "") +
+    (famRows ? "" : runLine) +
+    note +
+    (scroller ? `<div class="fp-scroll">${scroller}</div>` : "")
+  );
+}
+
+// Repaint the header pill + popover contents from freshData. Hides both when
+// there is no graph.
+function updateFreshness() {
+  const host = $("#freshness");
+  const pop = $("#fresh-pop");
+  if (!host) return;
+  const sum = freshSummary(freshData);
+  if (!sum) {
+    host.hidden = true;
+    host.innerHTML = "";
+    if (pop && pop.matches(":popover-open")) pop.hidePopover();
+    return;
+  }
+  host.hidden = false;
+  host.innerHTML =
+    `<button class="fresh-pill ${sum.cls}" popovertarget="fresh-pop" title="Graph freshness" aria-label="Graph freshness: ${esc(sum.label)}${esc(sum.behind)}">` +
+    // The label is its own element so the armed ticker can rewrite the count
+    // once a second without touching the rest of the pill.
+    `<span class="d"></span><span class="lb">${esc(sum.label)}</span>` +
+    (sum.behind ? `<span class="k">${esc(sum.behind)}</span>` : "") +
+    `<span class="chev">▾</span></button>`;
+  if (pop) {
+    // The panel repaints every 5s while a run is live, and a wholesale innerHTML
+    // swap resets the scroller to the top — read a family near the bottom of a
+    // 47-row run and it would yank you back to the first one mid-read.
+    const at = pop.querySelector(".fp-scroll")?.scrollTop ?? 0;
+    pop.innerHTML = freshPopHtml(freshData);
+    const scroller = pop.querySelector(".fp-scroll");
+    if (scroller && at) scroller.scrollTop = at;
+  }
+  syncArmedTicker();
+}
+
+// While a refresh is armed the number has to fall on its own: the poll runs
+// every 10s, and a countdown that jumps in ten-second steps reads as a stuck
+// figure rather than as a wait. The tick is local and rewrites two text nodes
+// — no request, and no innerHTML swap that would fight the open popover.
+let armedTimer = null;
+function syncArmedTicker() {
+  const armed = freshData && freshData.armedAt;
+  if (!armed) {
+    if (armedTimer) clearInterval(armedTimer);
+    armedTimer = null;
+    return;
+  }
+  if (armedTimer) return;
+  armedTimer = setInterval(() => {
+    if (!freshData || !freshData.armedAt) {
+      clearInterval(armedTimer);
+      armedTimer = null;
+      return;
+    }
+    const sum = freshSummary(freshData);
+    const lb = $("#freshness .fresh-pill .lb");
+    if (!lb) return;
+    if (sum) lb.textContent = sum.label;
+    const left = $("#fp-armed");
+    if (left)
+      left.textContent = `${Math.max(0, Math.ceil(freshData.armedAt - Date.now() / 1000))}s`;
+  }, 1000);
+}
+
+// Fire-and-forget: freshness must never block or break the main state load.
+async function loadFreshness() {
+  if (freshnessPoll !== null) {
+    clearTimeout(freshnessPoll);
+    freshnessPoll = null;
+  }
+  const r = await api("/api/graph-freshness");
+  freshData = r.ok ? r.data : null;
+  updateFreshness();
+  invalidateGraphIfRebuilt();
+  const delay = freshPollDelay(freshData);
+  if (delay !== null) freshnessPoll = setTimeout(loadFreshness, delay);
+}
+
+// Resolves true when the vault was read, false when it could not be — the
+// explicit refresh reports which, the mutation call sites ignore it.
 async function loadState() {
   const r = await api("/api/state");
-  if (!r.ok) return toast(r.data.error || "failed to load state");
+  if (!r.ok) {
+    toast(r.data.error || "failed to load state");
+    return false;
+  }
   lastStateAt = Date.now();
   state = r.data;
+  if (!sources.length) await loadSources();
   // Drop selections whose skill vanished (renamed/archived) so bulk ops never
   // target a ghost.
   const live = new Set([
@@ -4285,14 +7575,35 @@ async function loadState() {
   for (const n of [...libSel]) if (!live.has(n)) libSel.delete(n);
   $("#vault").textContent =
     `${state.vaultDir.replace(/^.*\//, "~/")} · ${state.skills.length} skills`;
+  loadFreshness(); // fire-and-forget; must never block the state render
   sync = (await api("/api/sync")).data;
   if (state.skills.length === 0) {
     curView = "empty";
     render();
-    return;
+    return true;
   }
   render();
   refreshSyncLive();
+  return true;
+}
+// The refresh button and r are the one read the user asks for, so unlike the
+// reloads that trail a write, this one reports itself: the icon spins while it
+// reads, then a toast says what came back.
+async function doRefresh() {
+  const b = $("#refresh");
+  if (b && b.classList.contains("spin")) return; // already reading
+  b?.classList.add("spin");
+  // Refresh means "read the vault again", and the graph is part of what the
+  // library shows. Without this the button re-read everything except the map,
+  // and a stale or empty graph could only be cleared by reloading the page.
+  graphData = null;
+  graphAt = 0;
+  const ok = await loadState();
+  b?.classList.remove("spin");
+  if (ok)
+    toast(
+      `Vault refreshed · ${(state.skills || []).length} skill${(state.skills || []).length === 1 ? "" : "s"}`,
+    );
 }
 // Once per boot, refresh the sync counters against the LIVE remote
 // (git fetch) so "to pull" reflects GitHub, not the last fetch. Runs
@@ -4331,4 +7642,44 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && lastStateAt && Date.now() - lastStateAt > 60000)
     loadState();
 });
+// Position the freshness popover under its pill on open (native popover renders
+// in the top layer, so it needs viewport coordinates), and wire the copy button.
+{
+  const fp = $("#fresh-pop");
+  if (fp) {
+    fp.addEventListener("toggle", (e) => {
+      if (e.newState !== "open") {
+        // A reopened panel starts folded: the expansion was an answer to "what
+        // ran?", and carrying it into the next look (or the next run) keeps the
+        // list long for no one.
+        freshDoneOpen = false;
+        return;
+      }
+      const btn = $("#freshness .fresh-pill");
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      fp.style.left =
+        Math.round(Math.max(8, Math.min(r.left, window.innerWidth - 352))) +
+        "px";
+      fp.style.top = Math.round(r.bottom + 8) + "px";
+      // Bound the panel to what is left of the viewport below the pill; the
+      // family list inside it scrolls. A run of 47 families is otherwise taller
+      // than the screen with no way to reach the bottom of it.
+      fp.style.maxHeight =
+        Math.max(220, Math.round(window.innerHeight - r.bottom - 20)) + "px";
+    });
+    fp.addEventListener("click", (e) => {
+      const b = e.target.closest(".fresh-copy");
+      if (b) copyText(b.getAttribute("data-cmd") || "");
+      if (e.target.closest("[data-fresh-done]")) {
+        freshDoneOpen = !freshDoneOpen;
+        updateFreshness();
+      }
+    });
+  }
+}
+initTheme();
+loadGroupAxis();
+loadLibView();
+loadStatusFilter();
 loadState();

@@ -9,15 +9,18 @@ export interface UiOptions {
   host?: string;
   open: boolean;
   allowRemoteWrites?: boolean;
+  /** Directory whose favicon.ico / apple-touch-icon.png override the bundled
+   *  ones, so two instances of one vault stay distinguishable in a tab strip. */
+  brandDir?: string;
 }
 
-function isLocalHost(host: string): boolean {
+export function isLocalHost(host: string): boolean {
   // localhost, IPv6 loopback, or anything in the 127.0.0.0/8 loopback block.
   return host === "localhost" || host === "::1" || host.startsWith("127.");
 }
 
 export function runUi(vaultDir: string, opts: UiOptions): number {
-  loadConfig(vaultDir); // valida che siamo in un vault (UsageError -> exit 2 in main)
+  loadConfig(vaultDir); // asserts this is a vault (UsageError -> exit 2 in main)
   const host = opts.host ?? "127.0.0.1";
   // The dashboard exposes write endpoints (mutate the vault, run git) with no
   // auth. Refuse to bind them to a non-local address unless the operator opts
@@ -30,7 +33,7 @@ export function runUi(vaultDir: string, opts: UiOptions): number {
     );
     return 2;
   }
-  const server = createUiServer(vaultDir);
+  const server = createUiServer(vaultDir, { brandDir: opts.brandDir });
   // Without this, a bind failure (e.g. the port is taken) emits an unhandled
   // 'error' and crashes with a stack trace instead of a clean message.
   server.on("error", (err: NodeJS.ErrnoException) => {

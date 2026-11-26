@@ -14,7 +14,6 @@ import {
   archiveOp,
   bulkApply,
   bulkArchiveOp,
-  bulkRenameOp,
   bulkRestoreOp,
   bulkStatusOp,
   bulkTaxonomyOp,
@@ -88,7 +87,7 @@ test("addOp on a strict-taxonomy vault: requires domain/layer, scaffolds section
   const out = addOp(
     vault,
     "with-taxo",
-    { domain: "brand-a", layer: "tool", description: "d" },
+    { taxonomy: { domain: "brand-a", layer: "tool" }, description: "d" },
     true,
   );
   assert.equal(out.status, 0);
@@ -97,6 +96,92 @@ test("addOp on a strict-taxonomy vault: requires domain/layer, scaffolds section
   assert.match(md, /^layer: tool$/m);
   assert.match(md, /^status: draft$/m); // new skills default to draft, not active
   assert.match(md, /^## Policy$/m);
+});
+
+test("addOp: a vault requiring status still enforces it after the taxonomy/status split", () => {
+  const vault = makeTmp();
+  writeFileSync(
+    path.join(vault, "loom.json"),
+    JSON.stringify({
+      consumers: {},
+      lint: { requireTaxonomy: ["status"] },
+    }),
+  );
+  // status not given -> refused, and NOT via the "missing taxonomy" branch
+  // (requireTaxonomy filters "status" out before that check runs).
+  const missing = addOp(vault, "a", {}, true);
+  assert.equal(missing.status, 2);
+  assert.match(missing.message, /require status/);
+  assert.ok(!existsSync(path.join(vault, "a")));
+  // status given -> created
+  const ok = addOp(vault, "b", { status: "draft" }, true);
+  assert.equal(ok.status, 0);
+  assert.ok(existsSync(path.join(vault, "b", "SKILL.md")));
+});
+
+test("addOp: writes declared axes in declaration order", () => {
+  const vault = makeTmp();
+  writeFileSync(
+    path.join(vault, "loom.json"),
+    JSON.stringify({
+      consumers: {},
+      taxonomy: { domain: {}, area: {}, kind: {} },
+    }),
+  );
+  addOp(
+    vault,
+    "alpha",
+    {
+      taxonomy: {
+        kind: "framework",
+        domain: "cross",
+        area: "governance-quality",
+      },
+    },
+    true,
+  );
+  const md = readFileSync(path.join(vault, "alpha", "SKILL.md"), "utf8");
+  assert.match(md, /domain: cross\narea: governance-quality\nkind: framework/);
+});
+
+test("addOp: rejects a flag that is not a declared axis", () => {
+  const vault = makeTmp();
+  writeFileSync(
+    path.join(vault, "loom.json"),
+    JSON.stringify({ consumers: {}, taxonomy: { domain: {} } }),
+  );
+  const out = addOp(vault, "alpha", { taxonomy: { layer: "tool" } }, false);
+  assert.equal(out.status, 2);
+  assert.match(out.message, /unknown taxonomy axis "layer"/);
+});
+
+test("bulkTaxonomyOp: accepts any declared axis and rejects others", () => {
+  const vault = makeTmp();
+  writeFileSync(
+    path.join(vault, "loom.json"),
+    JSON.stringify({
+      consumers: {},
+      taxonomy: { domain: {}, area: { values: ["governance-quality"] } },
+    }),
+  );
+  mkdirSync(path.join(vault, "alpha"), { recursive: true });
+  writeFileSync(
+    path.join(vault, "alpha", "SKILL.md"),
+    "---\nname: alpha\ndescription: d\n---\n\n# alpha\n",
+  );
+  assert.equal(
+    bulkTaxonomyOp(vault, ["alpha"], "area", "governance-quality", false)
+      .status,
+    0,
+  );
+  assert.equal(
+    bulkTaxonomyOp(vault, ["alpha"], "layer", "tool", false).status,
+    2,
+  );
+  assert.equal(
+    bulkTaxonomyOp(vault, ["alpha"], "area", "nope", false).status,
+    2,
+  );
 });
 
 test("archiveOp and migrateOp report status 2 on missing skill", () => {
@@ -208,12 +293,12 @@ test("addOp scaffolds a new skill as draft", () => {
   assert.match(fm, /status: draft|# status: draft/);
 });
 
-// Regression: migrateOp/restoreOp used to build a synthetic Skill for
-// planLinks() that omitted `status`, so isActive() defaulted it to active and
-// linked the skill regardless of its real lifecycle status. Since new skills
-// default to `draft`, this silently linked drafts into every runtime on the
-// primary authoring path (create draft -> rename it).
-test("migrateOp renaming a draft skill does not link it into consumers", () => {
+// migrateOp/restoreOp build a synthetic Skill for planLinks(); it must carry the
+// real `status` so the projection predicate (isLinked) sees it. Draft and active
+// are both projected (draft rides the review ramp); idea/suspended/deprecated are
+// not. If the synthetic Skill omitted status it would default to active and
+// wrongly link a suspended skill — the suspended case below guards that.
+test("migrateOp renaming a draft skill links it into consumers (draft is projected)", () => {
   const vault = makeTmp();
   const rt = makeTmp();
   makeConfig(vault, { claude: rt });
@@ -226,7 +311,23 @@ test("migrateOp renaming a draft skill does not link it into consumers", () => {
   const out = migrateOp(vault, "old-draft", "new-draft", true);
   assert.equal(out.status, 0);
   assert.ok(existsSync(path.join(vault, "cat", "new-draft", "SKILL.md")));
-  assert.ok(!existsSync(path.join(rt, "new-draft")));
+  assert.ok(lstatSync(path.join(rt, "new-draft")).isSymbolicLink());
+});
+
+test("migrateOp renaming a suspended skill does not link it into consumers", () => {
+  const vault = makeTmp();
+  const rt = makeTmp();
+  makeConfig(vault, { claude: rt });
+  const dir = path.join(vault, "cat", "old-susp");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(dir, "SKILL.md"),
+    `---\nname: old-susp\ndescription: test skill\nstatus: suspended\n---\n\n# old-susp\n`,
+  );
+  const out = migrateOp(vault, "old-susp", "new-susp", true);
+  assert.equal(out.status, 0);
+  assert.ok(existsSync(path.join(vault, "cat", "new-susp", "SKILL.md")));
+  assert.ok(!existsSync(path.join(rt, "new-susp")));
 });
 
 test("migrateOp renaming an active skill still links it into consumers", () => {
@@ -239,7 +340,7 @@ test("migrateOp renaming an active skill still links it into consumers", () => {
   assert.ok(lstatSync(path.join(rt, "new-active")).isSymbolicLink());
 });
 
-test("restoreOp restoring a draft skill does not link it into consumers", () => {
+test("restoreOp restoring a draft skill links it into consumers", () => {
   const vault = makeTmp();
   const rt = makeTmp();
   makeConfig(vault, { claude: rt });
@@ -256,7 +357,7 @@ test("restoreOp restoring a draft skill does not link it into consumers", () => 
   const out = restoreOp(vault, "draft-skill", true);
   assert.equal(out.status, 0);
   assert.ok(existsSync(path.join(vault, "draft-skill", "SKILL.md")));
-  assert.ok(!existsSync(path.join(rt, "draft-skill")));
+  assert.ok(lstatSync(path.join(rt, "draft-skill")).isSymbolicLink());
 });
 
 test("bulkStatusOp promotes to active (links) and demotes (unlinks)", () => {
@@ -294,6 +395,81 @@ test("bulkStatusOp promotes to active (links) and demotes (unlinks)", () => {
   // apply demote: link removed
   bulkStatusOp(vault, ["liveone"], "suspended", true);
   assert.ok(!existsSync(path.join(consumerDir, "liveone")));
+});
+
+// The projection boundary is isLinked (active OR draft), not isActive. These
+// four transitions are the ones an isActive-based promote/demote pair gets
+// wrong: reconciling every target against the DESTINATION status fixes them all
+// and makes the op idempotent (it repairs drift instead of assuming none).
+function statusFixture() {
+  const vault = makeTmp();
+  const consumerDir = path.join(makeTmp(), "skills");
+  mkdirSync(consumerDir, { recursive: true });
+  makeConfig(vault, { claude: consumerDir });
+  const mk = (name: string, status: string) => {
+    const d = path.join(vault, name);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(
+      path.join(d, "SKILL.md"),
+      `---\nname: ${name}\ndescription: x\nstatus: ${status}\n---\n\n# ${name}\n`,
+    );
+    return d;
+  };
+  return { vault, consumerDir, mk };
+}
+
+test("bulkStatusOp keeps the link when an active skill moves to draft", () => {
+  const { vault, consumerDir, mk } = statusFixture();
+  mk("rampup", "active");
+  symlinkSync(path.join(vault, "rampup"), path.join(consumerDir, "rampup"));
+
+  bulkStatusOp(vault, ["rampup"], "draft", true);
+
+  assert.ok(
+    lstatSync(path.join(consumerDir, "rampup")).isSymbolicLink(),
+    "draft is projected, so active -> draft must not unlink",
+  );
+});
+
+test("bulkStatusOp unlinks a draft skill moved to a non-projected status", () => {
+  const { vault, consumerDir, mk } = statusFixture();
+  mk("parked", "draft");
+  symlinkSync(path.join(vault, "parked"), path.join(consumerDir, "parked"));
+
+  bulkStatusOp(vault, ["parked"], "suspended", true);
+
+  assert.ok(
+    !existsSync(path.join(consumerDir, "parked")),
+    "suspended is not projected, so the draft's link must go",
+  );
+});
+
+test("bulkStatusOp links a skill promoted from idea to draft", () => {
+  const { vault, consumerDir, mk } = statusFixture();
+  mk("seed", "idea");
+
+  bulkStatusOp(vault, ["seed"], "draft", true);
+
+  assert.ok(
+    lstatSync(path.join(consumerDir, "seed")).isSymbolicLink(),
+    "draft is projected, so idea -> draft must link",
+  );
+});
+
+test("bulkStatusOp repairs a missing link when the status does not change", () => {
+  const { vault, consumerDir, mk } = statusFixture();
+  mk("drifted", "active");
+
+  const dry = bulkStatusOp(vault, ["drifted"], "active", false);
+  assert.equal(dry.status, 0);
+  assert.ok(dry.actions.some((a) => a.includes("drifted")));
+  assert.ok(
+    !existsSync(path.join(consumerDir, "drifted")),
+    "dry-run plans the repair without writing it",
+  );
+
+  bulkStatusOp(vault, ["drifted"], "active", true);
+  assert.ok(lstatSync(path.join(consumerDir, "drifted")).isSymbolicLink());
 });
 
 test("bulkStatusOp refuses a batch with an unknown name, writing nothing", () => {
@@ -429,96 +605,6 @@ test("bulkArchiveOp refuses when a name is not in the vault, writing nothing", (
   const r = bulkArchiveOp(vault, ["one", "ghost"], true);
   assert.equal(r.status, 2);
   assert.ok(existsSync(path.join(vault, "one"))); // untouched
-});
-
-test("bulkRenameOp add-prefix renames many and rewrites the frontmatter name", () => {
-  const vault = makeTmp();
-  makeConfig(vault, {});
-  const mk = (name: string) => {
-    const d = path.join(vault, name);
-    mkdirSync(d, { recursive: true });
-    writeFileSync(
-      path.join(d, "SKILL.md"),
-      `---\nname: ${name}\ndescription: x\n---\n\n# ${name}\n`,
-    );
-  };
-  mk("foo");
-  mk("bar");
-  const dry = bulkRenameOp(
-    vault,
-    ["foo", "bar"],
-    { op: "add-prefix", value: "b19-" },
-    false,
-  );
-  assert.equal(dry.status, 0);
-  assert.ok(dry.actions.some((a) => a.includes('"foo" -> "b19-foo"')));
-  assert.ok(existsSync(path.join(vault, "foo"))); // dry-run: not renamed
-
-  const wet = bulkRenameOp(
-    vault,
-    ["foo", "bar"],
-    { op: "add-prefix", value: "b19-" },
-    true,
-  );
-  assert.equal(wet.status, 0);
-  assert.ok(existsSync(path.join(vault, "b19-foo", "SKILL.md")));
-  assert.match(
-    readFileSync(path.join(vault, "b19-foo", "SKILL.md"), "utf8"),
-    /name: b19-foo/,
-  );
-});
-
-test("bulkRenameOp refuses a batch that would collide, writing nothing", () => {
-  const vault = makeTmp();
-  makeConfig(vault, {});
-  const mk = (name: string) => {
-    const d = path.join(vault, name);
-    mkdirSync(d, { recursive: true });
-    writeFileSync(
-      path.join(d, "SKILL.md"),
-      `---\nname: ${name}\ndescription: x\n---\n\n# ${name}\n`,
-    );
-  };
-  mk("test-foo");
-  mk("foo");
-  // strip-prefix "test-" turns test-foo into foo, which already exists
-  const r = bulkRenameOp(
-    vault,
-    ["test-foo"],
-    { op: "strip-prefix", value: "test-" },
-    true,
-  );
-  assert.equal(r.status, 2);
-  assert.ok(existsSync(path.join(vault, "test-foo"))); // untouched
-});
-
-test("bulkRenameOp replace transform renames matching names and skips non-matching", () => {
-  const vault = makeTmp();
-  makeConfig(vault, {});
-  const mk = (name: string) => {
-    const d = path.join(vault, name);
-    mkdirSync(d, { recursive: true });
-    writeFileSync(
-      path.join(d, "SKILL.md"),
-      `---\nname: ${name}\ndescription: x\n---\n\n# ${name}\n`,
-    );
-  };
-  mk("foo-old");
-  mk("bar"); // no "old" substring -> no-op, skipped (not an error)
-  const r = bulkRenameOp(
-    vault,
-    ["foo-old", "bar"],
-    { op: "replace", from: "old", to: "new" },
-    true,
-  );
-  assert.equal(r.status, 0);
-  assert.ok(existsSync(path.join(vault, "foo-new", "SKILL.md")));
-  assert.ok(!existsSync(path.join(vault, "foo-old")));
-  assert.match(
-    readFileSync(path.join(vault, "foo-new", "SKILL.md"), "utf8"),
-    /name: foo-new/,
-  );
-  assert.ok(existsSync(path.join(vault, "bar"))); // no-op member untouched
 });
 
 test("bulkApply keeps applying past a failing item and reports which failed", () => {

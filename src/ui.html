@@ -3,15 +3,29 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>skill-loom</title>
+    <title>Skill Loom</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="stylesheet" href="/ui.css" />
+    <script>
+      // Runs before the first paint: a stored theme must be on <html> by the
+      // time the page draws, or the UI shows the system theme for a frame and
+      // then flips. Deliberately not in ui.js, which loads at the end of body.
+      try {
+        var t = localStorage.getItem("skill-loom:theme");
+        if (t === "light" || t === "dark")
+          document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <header>
       <button class="brand" data-go="skills">
         skill-loom<span class="dot">.</span>
       </button>
-      <span class="vault" id="vault"></span>
+      <span class="vault" id="vault"></span> <span id="freshness" hidden></span>
       <nav>
         <a data-go="skills" id="nav-skills">My skills</a>
         <a data-go="status" id="nav-status">Status</a>
@@ -36,6 +50,59 @@
           >
             <path d="M21 12a9 9 0 1 1-2.64-6.36" />
             <path d="M21 3v5h-5" />
+          </svg>
+        </button>
+        <button class="icon" id="theme-btn" aria-label="Appearance">
+          <svg
+            class="ic-system"
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.9"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect width="20" height="14" x="2" y="3" rx="2" />
+            <line x1="8" x2="16" y1="21" y2="21" />
+            <line x1="12" x2="12" y1="17" y2="21" />
+          </svg>
+          <svg
+            class="ic-light"
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.9"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2" />
+            <path d="M12 20v2" />
+            <path d="m4.93 4.93 1.41 1.41" />
+            <path d="m17.66 17.66 1.41 1.41" />
+            <path d="M2 12h2" />
+            <path d="M20 12h2" />
+            <path d="m6.34 17.66-1.41 1.41" />
+            <path d="m19.07 4.93-1.41 1.41" />
+          </svg>
+          <svg
+            class="ic-dark"
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.9"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path
+              d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"
+            />
           </svg>
         </button>
         <button
@@ -63,7 +130,7 @@
     </header>
     <div id="navprog" aria-hidden="true"></div>
     <div id="app"></div>
-    <dialog id="confirm">
+    <dialog id="confirm" aria-labelledby="confirm-title">
       <h2 id="confirm-title"></h2>
       <ul id="confirm-actions"></ul>
       <div class="dialog-actions">
@@ -71,11 +138,12 @@
         ><button id="confirm-yes" class="btn primary">Confirm</button>
       </div>
     </dialog>
-    <dialog id="prompt">
+    <dialog id="prompt" aria-labelledby="prompt-title">
       <h2 id="prompt-title"></h2>
       <input
         id="prompt-input"
         class="txt"
+        aria-labelledby="prompt-title"
         type="text"
         spellcheck="false"
         autocomplete="off"
@@ -85,30 +153,13 @@
         ><button id="prompt-yes" class="btn primary">OK</button>
       </div>
     </dialog>
-    <dialog id="renamebulk">
-      <h2 id="renamebulk-title">Rename skills</h2>
-      <div class="field-row">
-        <label class="field" for="rb-op">Pattern</label>
-        <select class="txt" id="rb-op">
-          <option value="add-prefix">Add prefix</option>
-          <option value="strip-prefix">Strip prefix</option>
-          <option value="replace">Find and replace</option>
-        </select>
-      </div>
-      <div class="field-row" id="rb-row-a">
-        <label class="field" for="rb-a" id="rb-label-a">Prefix</label>
-        <input class="txt" id="rb-a" />
-      </div>
-      <div class="field-row" id="rb-row-b" hidden>
-        <label class="field" for="rb-b">Replace with</label>
-        <input class="txt" id="rb-b" />
-      </div>
-      <div class="dialog-actions">
-        <button id="renamebulk-no" class="btn">Cancel</button>
-        <button id="renamebulk-yes" class="btn primary">Preview</button>
-      </div>
-    </dialog>
-    <div id="toast"></div>
+    <div id="fresh-pop" popover></div>
+    <!-- Every confirmation the app gives ("Command copied", sync results,
+         errors) goes through the toast. Without a live region it is announced
+         to nobody, and a screen-reader user never learns whether a write
+         landed. polite, not assertive: it confirms, it does not interrupt. -->
+    <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+    <script src="/icons.js"></script>
     <script src="/ui.js"></script>
   </body>
 </html>

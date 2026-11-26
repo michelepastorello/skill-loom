@@ -11,6 +11,13 @@ export interface SyncStatus {
   dirty: number;
   ahead: number;
   behind: number;
+  /** False when the branch has no upstream, so ahead/behind could not be
+   *  computed at all. They are 0 in that case, and 0 is a lie of the most
+   *  expensive kind: it reads as "in sync". A vault here sat 135 commits ahead
+   *  and 137 behind for nine days while every surface reported 0/0 and the
+   *  dashboard offered nothing to push or pull. Anything that displays those
+   *  two numbers must check this first and say "unknown" instead. */
+  upstream: boolean;
   /** Subjects of remote commits not yet pulled (newest first, capped). */
   incoming: string[];
   /** Subjects of local commits not yet pushed (newest first, capped). */
@@ -61,6 +68,7 @@ export function syncStatus(
       dirty: 0,
       ahead: 0,
       behind: 0,
+      upstream: false,
       incoming: [],
       outgoing: [],
     };
@@ -74,6 +82,7 @@ export function syncStatus(
       : 0;
   let ahead = 0;
   let behind = 0;
+  let upstream = false;
   let incoming: string[] = [];
   let outgoing: string[] = [];
   if (remote) {
@@ -89,6 +98,7 @@ export function syncStatus(
       const [a = "0", b = "0"] = counts.stdout.trim().split(/\s+/);
       ahead = Number(a);
       behind = Number(b);
+      upstream = true;
     }
     const subjects = (range: string) => {
       const out = git(vaultDir, "log", "--format=%s", "-n", "8", range);
@@ -97,7 +107,16 @@ export function syncStatus(
     if (behind > 0) incoming = subjects("HEAD..@{upstream}");
     if (ahead > 0) outgoing = subjects("@{upstream}..HEAD");
   }
-  return { versioned: true, remote, dirty, ahead, behind, incoming, outgoing };
+  return {
+    versioned: true,
+    remote,
+    dirty,
+    ahead,
+    behind,
+    upstream,
+    incoming,
+    outgoing,
+  };
 }
 
 // File paths involved in each pending sync direction, for per-skill
@@ -231,6 +250,37 @@ export function syncOp(
     };
   }
   const actions: string[] = [];
+  // Without an upstream, ahead/behind are 0 because they could not be computed.
+  // Falling through would print "already in sync" over an unmeasured remote —
+  // and offer no push or pull, which is exactly how a nine-day divergence went
+  // unnoticed here. Say so, and say what fixes it.
+  if (!st.upstream) {
+    // Two very different situations share "no upstream", and only one is safe.
+    // Bootstrap: the remote has no such branch yet, so the first `push -u`
+    // establishes tracking and there is nothing to be out of sync WITH.
+    // Divergence: the branch EXISTS on the remote and is simply not tracked —
+    // then ahead/behind are unmeasured, and continuing would print "already in
+    // sync" over an unknown remote. That is how nine days of drift stayed
+    // invisible here. Only the second case blocks.
+    const branch = git(vaultDir, "rev-parse", "--abbrev-ref", "HEAD");
+    const name = branch.status === 0 ? branch.stdout.trim() : "HEAD";
+    const onRemote = git(vaultDir, "ls-remote", "--heads", "origin", name);
+    const remoteHasBranch =
+      onRemote.status === 0 && onRemote.stdout.trim().length > 0;
+    if (remoteHasBranch)
+      return {
+        status: 1,
+        message:
+          `origin/${name} exists but this branch does not track it — ahead/behind are UNKNOWN, not zero. ` +
+          `Run "git branch --set-upstream-to=origin/${name}" before trusting any sync state.`,
+        actions:
+          st.dirty > 0
+            ? [
+                `commit ${st.dirty} changed file(s) as "loom: sync from ${hostname()}"`,
+              ]
+            : [],
+      };
+  }
   if (st.dirty > 0)
     actions.push(
       `commit ${st.dirty} changed file(s) as "loom: sync from ${hostname()}"`,

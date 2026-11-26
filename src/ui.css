@@ -24,8 +24,9 @@
     U+2215, U+FEFF, U+FFFD;
 }
 /* ══ skill-loom · design system (Studio · teal 205 · cool neutrals) ══════
-   Light + dark, WCAG-AA verified. This is the stylesheet the real
-   src/ui.html will adopt. */
+   Light + dark, WCAG-AA verified. This is the stylesheet src/ui.html links
+   to and `skill-loom ui` serves at /ui.css — copied verbatim into dist/
+   and shipped to npm. */
 
 /* toggle switch (activate / deactivate a runtime) — defined early, reused */
 .switch {
@@ -98,7 +99,7 @@
   border-radius: 12px;
   overflow: hidden;
   margin-bottom: 10px;
-  background: var(--surface);
+  background: var(--raised);
   max-width: 92ch;
 }
 .chg > summary {
@@ -137,56 +138,141 @@
   margin-bottom: 12px;
 }
 
+/* Colour tokens carry both themes in one place via light-dark(): the active
+   form follows `color-scheme`, so switching the whole UI is a single property
+   on <html> instead of a duplicated token block per theme.
+   --theme=system leaves `light dark` and the OS decides. */
 :root {
-  --bg: oklch(97.6% 0.006 232);
-  --surface: oklch(99.3% 0.003 232);
-  --panel: oklch(95% 0.008 232);
-  --line: oklch(90.5% 0.011 232);
-  --hair: oklch(93.5% 0.009 232);
-  --fg: oklch(26% 0.018 245);
-  --prose: oklch(33% 0.018 245);
-  --prose-b: oklch(24% 0.018 245);
-  --dim: oklch(50% 0.02 242);
-  --faint: oklch(57.5% 0.017 240);
-  --accent: oklch(48.5% 0.115 205);
-  --accent-soft: oklch(48.5% 0.115 205 / 0.13);
-  --ok: oklch(46% 0.13 160);
-  --ok-soft: oklch(46% 0.13 160 / 0.15);
-  --warn: oklch(51.5% 0.115 68);
-  --warn-soft: oklch(51.5% 0.115 68 / 0.16);
-  --err: oklch(52% 0.16 25);
-  --err-soft: oklch(52% 0.16 25 / 0.12);
-  --shadow-sm: 0 1px 2px oklch(40% 0.03 245 / 0.07);
+  color-scheme: light dark;
+  /* The light ramp sits a deliberate distance off pure white: --surface at 98%
+     is 2 points down, not 0.7. Everything above it is white on a screen and
+     reads as glare, not as paper. */
+  /* Three planes, one rule in both themes: the chrome recedes, the content
+     rises, the canvas sits between them. --shell is the second neutral layer
+     the product register asks for (sidebars, toolbars, panels); before it
+     existed, rails and cards shared --surface and the chrome was the brightest
+     thing on screen, so nothing read as layered. Elevation does not mirror with
+     the theme — "up" is lighter in both; what mirrors is where the canvas sits. */
+  /* The library's chrome — filter sidebar and source band — recedes behind the
+     table it filters. Nothing else draws on it: the top bar, the detail's two
+     sidebars and Status' rail take --pane, and Config's nav sits on the canvas.
+     In dark this equals --bg on purpose: the rails read as recessed because the
+     content beside them rises, not because they sink, and inventing a darker
+     value to justify the token was tried and rejected — it made the rails read
+     as a separate, heavier application. The token exists for light, where the
+     two really do differ. */
+  --shell: light-dark(oklch(94.2% 0.009 232), oklch(21.5% 0.012 245));
+  --bg: light-dark(oklch(95.9% 0.007 232), oklch(21.5% 0.012 245));
+  /* One value, two roles, so a calibration can move one without dragging the
+     other: --pane is the plane a view's content sits on (panels, lifted rails,
+     the top bar), --raised is what sits on top of it (buttons, fields, cards,
+     dialogs). They start equal on purpose. */
+  --pane: light-dark(oklch(98% 0.005 232), oklch(24.5% 0.014 245));
+  --raised: light-dark(oklch(98% 0.005 232), oklch(24.5% 0.014 245));
+  /* Hover is a tint of the foreground, not a fixed grey: it has to read the
+     same on a pane at 98% and on a rail at 94.2%, which one hardcoded colour
+     cannot do. */
+  --hover: color-mix(in oklab, var(--fg) 5%, transparent);
+  --panel: light-dark(oklch(92.6% 0.01 232), oklch(28% 0.016 245));
+  --line: light-dark(oklch(88.4% 0.013 232), oklch(33% 0.016 245));
+  --hair: light-dark(oklch(91.6% 0.011 232), oklch(29.5% 0.014 245));
+  --fg: light-dark(oklch(26% 0.018 245), oklch(92% 0.01 240));
+  /* Dark body sits at 76%, not 81%: against --prose-b (86.5%) the lighter value
+     left only 5.5 L* and bold stopped reading as bold. Light keeps 33% — it
+     already carries a 9 L* gap. */
+  --prose: light-dark(oklch(33% 0.018 245), oklch(76% 0.013 240));
+  --prose-b: light-dark(oklch(24% 0.018 245), oklch(86.5% 0.011 240));
+  --dim: light-dark(oklch(50% 0.02 242), oklch(70% 0.014 240));
+  /* The quiet tier: counts, dates, paths, placeholders. Dark sits at the AA
+     floor for its darkest background (--panel) and still reads a clear step
+     below --dim at 70%. Light cannot do the same — see DESIGN.md: at 92.6-98%
+     the backgrounds are packed against white, and the value that would clear AA
+     on all of them is 51%, one point off --dim. The tier would stop existing,
+     so light keeps 57.5% as a recorded exception. */
+  --faint: light-dark(oklch(57.5% 0.017 240), oklch(65.5% 0.015 240));
+  --accent: light-dark(oklch(48.5% 0.115 205), oklch(78% 0.1 205));
+  --accent-soft: light-dark(
+    oklch(48.5% 0.115 205 / 0.13),
+    oklch(78% 0.1 205 / 0.17)
+  );
+  /* The accent AS TEXT sitting on --accent-soft. The plain --accent measures
+     4.12:1 there in light — the soft fill lifts the background just enough to
+     eat the margin — so the pairing gets its own value one step further from
+     the fill. Same hue, so an active chip still reads as the accent. */
+  --accent-ink: light-dark(oklch(42% 0.12 205), oklch(85% 0.09 205));
+  /* draft lifecycle state: indigo 255 — blue reads as "in progress" the way
+     every issue tracker uses it, and it stays clear of active-green (160, 95
+     degrees off). 268 was tried to open the gap to the brand accent (ciano 205)
+     further still, but 255 is the better blue on screen and the two rarely sit
+     side by side. */
+  --draft: light-dark(oklch(49% 0.15 255), oklch(78% 0.13 255));
+  --draft-soft: light-dark(
+    oklch(49% 0.15 255 / 0.14),
+    oklch(78% 0.13 255 / 0.17)
+  );
+  --ok: light-dark(oklch(46% 0.13 160), oklch(72% 0.13 160));
+  --ok-soft: light-dark(oklch(46% 0.13 160 / 0.15), oklch(72% 0.13 160 / 0.16));
+  --warn: light-dark(oklch(51.5% 0.115 68), oklch(76% 0.13 74));
+  --warn-soft: light-dark(
+    oklch(51.5% 0.115 68 / 0.16),
+    oklch(76% 0.13 74 / 0.17)
+  );
+  /* warn AS TEXT on --warn-soft: the plain --warn measures 4.37:1 there in
+     light, the same margin the accent loses on its own soft fill. */
+  --warn-ink: light-dark(oklch(45% 0.115 68), oklch(80% 0.12 74));
+  --err: light-dark(oklch(52% 0.16 25), oklch(68% 0.15 25));
+  --err-soft: light-dark(oklch(52% 0.16 25 / 0.12), oklch(68% 0.15 25 / 0.16));
+  /* err AS TEXT on --err-soft: the plain --err measures 4.23:1 there in dark,
+     the third of the state colours to lose the same margin on its own fill. */
+  --err-ink: light-dark(oklch(48% 0.16 25), oklch(76% 0.14 25));
+  /* light-dark() is a colour function, so it goes in the shadow's colour slot,
+     not around the whole value list. */
+  --shadow-sm: 0 1px 2px
+    light-dark(oklch(40% 0.03 245 / 0.07), oklch(0% 0 0 / 0.4));
   --shadow:
-    0 1px 2px oklch(40% 0.03 245 / 0.06), 0 10px 30px oklch(40% 0.03 245 / 0.09);
-  --font: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --btn-fg: #fff;
+    0 1px 2px light-dark(oklch(40% 0.03 245 / 0.06), oklch(0% 0 0 / 0.4)),
+    0 10px 30px light-dark(oklch(40% 0.03 245 / 0.09), oklch(0% 0 0 / 0.35));
+  --btn-fg: light-dark(#fff, oklch(20% 0.02 245));
+  /* Syntax highlighting: same mechanism, so the theme switch reaches code too */
+  --tok-kw: light-dark(oklch(52% 0.15 300), oklch(80% 0.12 300));
+  --tok-str: light-dark(oklch(48% 0.13 150), oklch(78% 0.13 150));
+  --tok-num: light-dark(oklch(52% 0.14 55), oklch(80% 0.11 55));
+  --tok-bool: light-dark(oklch(50% 0.13 190), oklch(78% 0.11 190));
+  --tok-fn: light-dark(oklch(49% 0.13 255), oklch(78% 0.12 255));
+  --tok-prop: light-dark(oklch(48% 0.12 205), oklch(80% 0.1 205));
+  --tok-tag: light-dark(oklch(52% 0.16 20), oklch(77% 0.14 20));
+  --tok-attr: light-dark(oklch(52% 0.13 75), oklch(81% 0.12 75));
+  /* Emoji families sit ahead of system-ui on purpose: SF Pro and Segoe UI
+     both carry monochrome glyphs for ⚠ ✅ ❌, so they win the fallback and
+     render those characters as flat text instead of emoji. */
+  --font:
+    "Figtree", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji",
+    system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* The emoji families ride at the end of the mono stack for the same reason
+     they ride ahead of system-ui in --font: SF Mono and friends carry no colour
+     glyphs, and without an explicit colour-emoji fallback a ⭐ in the Source
+     view (or any code span) drops to a hollow text-presentation outline. */
+  --mono:
+    ui-monospace, "SF Mono", Menlo, Consolas, "Apple Color Emoji",
+    "Segoe UI Emoji", "Noto Color Emoji", monospace;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: oklch(21% 0.012 245);
-    --surface: oklch(24.5% 0.014 245);
-    --panel: oklch(28.5% 0.016 245);
-    --line: oklch(34% 0.016 245);
-    --hair: oklch(30% 0.014 245);
-    --fg: oklch(92% 0.01 240);
-    --prose: oklch(81% 0.012 240);
-    --prose-b: oklch(86.5% 0.011 240);
-    --dim: oklch(70% 0.014 240);
-    --faint: oklch(58% 0.014 240);
-    --accent: oklch(78% 0.1 205);
-    --accent-soft: oklch(78% 0.1 205 / 0.17);
-    --ok: oklch(72% 0.13 160);
-    --ok-soft: oklch(72% 0.13 160 / 0.16);
-    --warn: oklch(76% 0.13 74);
-    --warn-soft: oklch(76% 0.13 74 / 0.17);
-    --err: oklch(68% 0.15 25);
-    --err-soft: oklch(68% 0.15 25 / 0.16);
-    --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.4);
-    --shadow: 0 1px 2px oklch(0% 0 0 / 0.4), 0 10px 30px oklch(0% 0 0 / 0.35);
-    --btn-fg: oklch(20% 0.02 245);
-  }
+/* The appearance button ships all three glyphs and the theme picks one, so the
+   right icon is on screen at first paint instead of being written in by JS a
+   frame later. No attribute = following the system. */
+#theme-btn svg {
+  display: none;
+}
+:root:not([data-theme]) #theme-btn .ic-system,
+:root[data-theme="light"] #theme-btn .ic-light,
+:root[data-theme="dark"] #theme-btn .ic-dark {
+  display: block;
+}
+/* Explicit user choice overrides the OS preference. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 /* Taxonomy accents are set inline per section (taxHueStyle in JS): a stable
@@ -196,6 +282,37 @@
 * {
   box-sizing: border-box;
 }
+/* One focus ring, on everything the keyboard can reach. An earlier version
+   suppressed it globally on the grounds that the app draws its own cursor
+   (.kbsel/.sel/.on) and that buttons are never tabbed to; neither held — .kbsel
+   renders in no view, Tab reaches every button, and .on marks which filter is
+   ACTIVE, which is a different thing from where the keyboard is. Without this
+   rule you navigate a git-writing surface blind (WCAG 2.4.7).
+   :focus-visible, not :focus: a mouse click on a button does not light it up. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline-width: 1.5px;
+  outline-offset: 1px;
+}
+/* Rows and cells are flush against their neighbours: an offset ring would be
+   clipped by the next row, so it sits inside instead. */
+tbody tr:focus-visible,
+.ritem:focus-visible,
+.fp-row:focus-visible {
+  outline-offset: -2px;
+}
+/* The search field wraps its input in a bordered box and clears the input's own
+   outline, so the box carries the focus instead. */
+.search:focus-within {
+  border-color: var(--accent);
+}
+
 [hidden] {
   display: none !important;
 }
@@ -239,7 +356,7 @@ header {
   padding: 0 26px;
   height: 54px;
   border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--pane);
 }
 .brand {
   font-size: 18.5px;
@@ -289,7 +406,7 @@ nav a:hover {
   color: var(--fg);
 }
 nav a.on {
-  color: var(--accent);
+  color: var(--accent-ink);
   background: var(--accent-soft);
   font-weight: 600;
 }
@@ -308,8 +425,24 @@ nav a.on {
   display: block;
 }
 .icon:hover {
-  background: var(--panel);
+  background: var(--hover);
   color: var(--fg);
+}
+/* Functional, not decorative: the icon turns only while the refresh is reading
+   the vault, so the action shows it is working before the toast reports what
+   came back. */
+.icon.spin svg {
+  animation: iconspin 0.7s linear infinite;
+}
+@keyframes iconspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .icon.spin svg {
+    animation: none;
+  }
 }
 
 /* ── buttons ────────────────────────────────────────────────────────── */
@@ -324,7 +457,7 @@ nav a.on {
   font-weight: 500;
   color: var(--fg);
   border: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--raised);
   border-radius: 9px;
   padding: 0 13px;
   cursor: pointer;
@@ -349,7 +482,7 @@ nav a.on {
   font-weight: 500;
   color: var(--dim);
   border: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--raised);
   border-radius: 9px;
   padding: 6px 12px;
   cursor: pointer;
@@ -405,7 +538,7 @@ h1.view {
   display: flex;
   align-items: center;
   gap: 11px;
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px 16px;
@@ -444,7 +577,7 @@ h1.view {
   background: var(--ok-soft);
 }
 .badge.warn {
-  color: var(--warn);
+  color: var(--warn-ink);
   background: var(--warn-soft);
 }
 .badge.off {
@@ -477,6 +610,16 @@ h1.view {
   padding: 3px;
   gap: 2px;
 }
+/* Group by holds one button per declared axis, so a vault with three or four
+   axes overflows the rail's width. Without this the buttons keep their slot
+   and wrap their own label instead — "Layer (legacy)" folded into a 43px
+   button. Wrapping the row keeps every label on one line. */
+#groupby {
+  flex-wrap: wrap;
+}
+#groupby button {
+  white-space: nowrap;
+}
 .seg button {
   border: 0;
   background: transparent;
@@ -489,7 +632,7 @@ h1.view {
   cursor: pointer;
 }
 .seg button.on {
-  background: var(--surface);
+  background: var(--raised);
   color: var(--fg);
   box-shadow: var(--shadow-sm);
 }
@@ -509,7 +652,7 @@ h1.view {
 }
 .librail .seg {
   display: flex;
-  margin: 0 2px;
+  margin: 0;
 }
 .librail .seg button {
   flex: 1;
@@ -533,7 +676,7 @@ h1.view {
   text-align: left;
 }
 .ritem:hover {
-  background: var(--panel);
+  background: var(--hover);
   color: var(--fg);
 }
 .ritem.on {
@@ -608,7 +751,9 @@ h1.view {
 .syncbanner .sbx {
   border: 0;
   background: transparent;
-  color: var(--dim);
+  /* --dim measured 4.31:1 on the banner's tinted fill; --prose is the next step
+     up and clears 4.5 on it. */
+  color: var(--prose);
   font: inherit;
   font-size: 17px;
   line-height: 1;
@@ -618,7 +763,7 @@ h1.view {
 }
 .syncbanner .sbx:hover {
   color: var(--fg);
-  background: var(--panel);
+  background: var(--hover);
 }
 /* ledger (list view) */
 table.ledger {
@@ -664,7 +809,7 @@ table.ledger tr[data-skill] {
   cursor: pointer;
 }
 table.ledger tr[data-skill]:hover td {
-  background: color-mix(in oklab, var(--panel) 55%, transparent);
+  background: var(--hover);
 }
 .lsechead {
   display: flex;
@@ -690,6 +835,16 @@ table.ledger tr[data-skill]:hover td {
   gap: 9px;
   font-weight: 650;
   white-space: nowrap;
+  min-width: 0;
+}
+/* A title longer than its column was cut mid-word against the cell edge, which
+   reads as a rendering fault rather than as a name that does not fit. The
+   ellipsis needs its own box: text-overflow does not apply to a bare text node
+   inside a flex row. */
+.lnt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ledger .tile {
   width: 24px;
@@ -710,10 +865,6 @@ td.lwhen {
   font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-td.lnone {
-  color: var(--faint);
-  font-size: 12px;
 }
 .covlegend {
   font-size: 12px;
@@ -736,7 +887,10 @@ td.lnone {
   letter-spacing: 0.02em;
   text-transform: uppercase;
   white-space: nowrap;
-  color: var(--tint, var(--dim));
+  /* Text takes the theme-mirrored ink; the dot below keeps the fixed surface
+     tint. Same hue, two lightnesses, because a fill and 11px text do not have
+     the same contrast job. */
+  color: var(--tint-ink, var(--tint, var(--dim)));
   background: var(--tint-soft, var(--panel));
   padding: 2px 8px;
   border-radius: 6px;
@@ -749,12 +903,16 @@ td.lnone {
   flex: none;
 }
 .badge.bad {
-  color: var(--err);
+  color: var(--err-ink);
   background: color-mix(in oklab, var(--err) 16%, transparent);
 }
 .badge.acc {
-  color: var(--accent);
+  color: var(--accent-ink);
   background: var(--accent-soft);
+}
+.badge.draft {
+  color: var(--draft);
+  background: var(--draft-soft);
 }
 .ledger .badge,
 .coverage .badge {
@@ -805,7 +963,7 @@ td.lnone {
 .card {
   display: flex;
   flex-direction: column;
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 15px;
   padding: 15px 17px 16px;
@@ -876,6 +1034,58 @@ table.ledger td.selcol {
   text-overflow: clip;
   text-align: left;
 }
+/* Taxonomy column: N chips in one cell instead of one column per axis — three
+   axes plus a description do not fit the ledger's width. */
+/* One column per axis. The cell must stay a real table-cell: `display: flex`
+   here took it out of the table's box model and its border-bottom stopped
+   lining up with the rest of the row, leaving the rules visibly broken under
+   the taxonomy columns. */
+.ltax {
+  overflow: hidden;
+  /* 8px sides against the table's 10: the longest label would otherwise land
+     exactly on the column edge, where a font or zoom difference is enough to
+     start clipping it again. */
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.ltax .taxchip {
+  max-width: 100%;
+}
+/* Ledger chips carry a column header of their own, so they drop the uppercase
+   and the tracking the standalone chips use — an area like "Content
+   Communications" is a third narrower this way and still fits its column. */
+.ltax .taxchip {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11.5px;
+  min-width: 0;
+}
+/* The dot is redundant inside a ledger chip — the chip's own fill already
+   carries the value's hue — and its 11px buy the longest area labels
+   ("Content communications") the room to render whole. */
+.ltax .taxchip .tcdot {
+  display: none;
+}
+.ltax .taxchip {
+  gap: 0;
+  /* Same box as the Status / Links / Sync badges beside it: same font size was
+     never the issue, the padding was — 2px 6px against their 3px 9px left the
+     taxonomy pills visibly shorter in the same row. */
+  padding: 3px 9px;
+}
+/* block, not the default inline: text-overflow needs a block box to clip
+   against, and an inline span reports clientWidth 0 so overflow is neither
+   rendered nor measurable. */
+.ltax .taxchip .tclabel {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+td.ltax.lnone {
+  color: var(--faint);
+}
+/* A rail axis heading doubles as a collapse toggle: with three axes the filter
+   list runs past thirty entries. */
 /* The library area never selects text: a drag there is always a marquee,
          never a native text-selection (grid + list). */
 #groups {
@@ -905,7 +1115,7 @@ table.ledger td.selcol {
   font-size: 17px;
   line-height: 1;
   background: var(--tint-soft, var(--panel));
-  color: var(--tint, var(--dim));
+  color: var(--tint-ink, var(--tint, var(--dim)));
 }
 .tile.mono {
   font-size: 14.5px;
@@ -933,6 +1143,9 @@ table.ledger td.selcol {
   flex: 1;
   min-width: 0;
 }
+/* The tag depends on whether a section h2 is above it (see libCard); the card
+   looks the same either way. */
+.card h2,
 .card h3 {
   font-size: 15px;
   font-weight: 650;
@@ -977,6 +1190,8 @@ table.ledger td.selcol {
   gap: 6px;
   flex-wrap: wrap;
 }
+/* Crossing between the active library and the archive: after the rows, in
+   both directions. The map is the exception — see renderLibrary. */
 .archivedlink {
   display: inline-block;
   margin-top: 30px;
@@ -990,15 +1205,22 @@ table.ledger td.selcol {
 .archivedlink:hover {
   color: var(--fg);
 }
+.fresh-pill .lb {
+  font-variant-numeric: tabular-nums;
+}
 
 /* ── detail: full-bleed three-pane ──────────────────────────────────── */
 .layout {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr) 300px;
 }
+/* Read-only source detail is two panes (files + viewer), no runtimes/history rail. */
+.layout.srclayout {
+  grid-template-columns: 260px minmax(0, 1fr);
+}
 .rail {
   border-right: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--pane);
   padding: 18px 0;
   overflow-y: auto;
 }
@@ -1054,6 +1276,17 @@ table.ledger td.selcol {
   height: 15px;
   display: block;
 }
+/* Monogram fallback: same footprint as the glyph it replaces, so the labels
+   beside it stay on one optical column. */
+.fic.mono {
+  width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
 .file .sz {
   font-size: 10.5px;
   color: var(--faint);
@@ -1064,7 +1297,8 @@ table.ledger td.selcol {
   min-width: 3.6em;
 }
 /* filename never wraps: the folder prefix truncates first, name+ext always show */
-#filelist .fdir {
+#filelist .fdir,
+#srcfilelist .fdir {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -1072,17 +1306,20 @@ table.ledger td.selcol {
   white-space: nowrap;
   color: var(--faint);
 }
-#filelist .fname {
+#filelist .fname,
+#srcfilelist .fname {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#filelist .file.sel .fdir {
+#filelist .file.sel .fdir,
+#srcfilelist .file.sel .fdir {
   color: var(--accent);
 }
-#filelist .flabel {
+#filelist .flabel,
+#srcfilelist .flabel {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 10px;
   letter-spacing: 0.11em;
@@ -1091,12 +1328,17 @@ table.ledger td.selcol {
   padding: 12px 20px 3px;
 }
 .file:hover:not(.sel) {
-  background: var(--panel);
+  background: var(--hover);
 }
 .file.sel {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-ink);
   font-weight: 600;
+}
+/* The gallery row sits above the Files heading, so that heading needs the air
+   a section start would have had. */
+#gal-entry + .railh {
+  padding-top: 16px;
 }
 .rail .group {
   margin-top: 20px;
@@ -1106,9 +1348,15 @@ table.ledger td.selcol {
   padding: 30px 52px 60px;
   overflow-y: auto;
   min-width: 0;
+  /* The detail view inverts the list views: here the rails take --surface and
+     the document column stays on the canvas. A long read is calmer as the
+     darkest thing on a dark screen, and the rails framing it are the furniture,
+     not the subject. A table wants the opposite — its content lifted. */
+  background: var(--bg);
   /* One shared content measure so prose, code blocks, tables and dividers
-           all share the same right edge. Fills the document column (no dead
-           space); tune this single value to cap the reading width if desired. */
+           all share the same right edge, and the document column carries no
+           dead width. Deliberate: full width beats a capped reading measure
+           here, because the column is already bounded by the three-pane grid. */
   --measure: 100%;
 }
 /* Refined scrollbars, consistent across every scroll surface (window +
@@ -1246,7 +1494,7 @@ html::-webkit-scrollbar-thumb:hover,
   cursor: pointer;
 }
 .seg b {
-  background: var(--surface);
+  background: var(--raised);
   font-weight: 600;
   box-shadow: var(--shadow-sm);
 }
@@ -1256,7 +1504,7 @@ html::-webkit-scrollbar-thumb:hover,
 
 .meta {
   border-left: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--pane);
   padding: 18px 0;
   overflow-y: auto;
 }
@@ -1294,7 +1542,7 @@ html::-webkit-scrollbar-thumb:hover,
   border-top: 1px solid var(--hair);
 }
 .commit:hover {
-  background: var(--panel);
+  background: var(--hover);
 }
 .commit.sel {
   background: var(--accent-soft);
@@ -1335,98 +1583,310 @@ html::-webkit-scrollbar-thumb:hover,
   margin: 0 0 8px;
   max-width: var(--measure);
 }
+/* Heading scale 24 / 19 / 16 / 15 against a 15px body, ratio ~1.2 and
+         monotonic. h1 and h4 previously had no size rule at all, so they fell
+         to browser defaults (32px and 15px bold) and h3, at 14.5px, ended up
+         smaller than the paragraphs it introduced. */
+.md h1 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  line-height: 1.22;
+  margin: 0 0 0.55em;
+  text-wrap: balance;
+}
 .md h2 {
-  font-size: 17px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  margin: 1.5em 0 0.5em;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+  margin: 2em 0 0.55em;
+  text-wrap: balance;
 }
 .md h3 {
-  font-size: 14.5px;
-  font-weight: 650;
-  margin: 1.1em 0 0.35em;
+  font-size: 16px;
+  font-weight: 680;
+  letter-spacing: -0.008em;
+  margin: 1.55em 0 0.4em;
+}
+.md h4 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 1.25em 0 0.3em;
 }
 .md p {
   font-size: 15px;
-  line-height: 1.64;
-  margin: 0.5em 0;
+  line-height: 1.65;
+  margin: 0.62em 0;
   max-width: var(--measure);
+  text-wrap: pretty;
 }
+/* 650: in dark --prose (81%) and --prose-b (86.5%) sit 5.5 L* apart, so the
+         weight carries most of the bold/body distinction. The headings no longer
+         need it lowered — at 19/16px they win on size. */
 .md strong {
   font-weight: 650;
 }
 .md a {
   color: var(--accent);
 }
+/* Status glyphs substituted for emoji by emojiIcons(): sized to the text,
+         tinted with the state tokens, aligned to the baseline. */
+.md .gly {
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  vertical-align: -0.14em;
+  margin-right: 0.1em;
+}
+.md .gly svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.md .gly.ok {
+  color: var(--ok);
+}
+.md .gly.warn {
+  color: var(--warn);
+}
+.md .gly.err {
+  color: var(--err);
+}
+.md .gly.dim {
+  color: var(--dim);
+}
+/* Padding in em, so the chip scales with the text and stops shoving the
+         punctuation after it away (`CLAUDE.md` , was visible at 6px) */
 .md code {
   font-family: var(--mono);
-  font-size: 0.95em;
-  background: var(--panel);
-  padding: 1px 6px;
-  border-radius: 5px;
+  font-size: 0.88em;
+  background: color-mix(in oklab, var(--panel) 60%, transparent);
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
 }
+/* --prose, not --dim: in a runbook the command is the payload, it cannot be
+         the least legible text on the page. Let highlight() mute the rest. */
 .md pre {
   font-family: var(--mono);
-  font-size: 12.5px;
-  background: var(--panel);
+  font-size: 13px;
+  background: color-mix(in oklab, var(--panel) 60%, transparent);
   border-radius: 10px;
-  padding: 14px 16px;
+  padding: 15px 18px;
   overflow-x: auto;
-  line-height: 1.7;
-  color: var(--dim);
+  line-height: 1.65;
+  color: var(--prose);
+  margin: 1.5em 0;
   max-width: var(--measure);
 }
 .md pre code {
   background: none;
   padding: 0;
 }
+/* Mermaid: the rendered diagram sits in a scrolling host so a wide graph
+   scrolls inside its own box instead of pushing the document sideways, and a
+   click opens it enlarged. While the library loads the host shows a skeleton
+   (below); only a parse/load failure falls back to the visible source. */
+.md .mermaid-wrap {
+  overflow-x: auto;
+  margin: 1.5em 0;
+  padding: 16px;
+  background: color-mix(in oklab, var(--panel) 60%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  max-width: var(--measure);
+  cursor: zoom-in;
+}
+/* Keep the diagram at its natural size so a wide graph scrolls inside the host
+   rather than shrinking to an illegible thumbnail (mermaid otherwise sets
+   width:100%, which scales it down to the column). Zoom covers a closer look. */
+.md .mermaid-wrap svg {
+  max-width: none;
+  width: auto;
+  height: auto;
+}
+/* Loading skeleton: the raw <pre.mermaid> still holds the source (kept for the
+   error fallback and no-JS), but while the library loads we show a quiet shimmer
+   with a label instead of flashing the code for a beat. On failure JS swaps in
+   the visible source, so nothing is lost. */
+pre.mermaid {
+  position: relative;
+  min-height: 88px;
+  color: transparent;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(
+        100deg,
+        transparent 32%,
+        color-mix(in oklab, var(--fg) 5%, transparent) 50%,
+        transparent 68%
+      )
+      0 0 / 220% 100% no-repeat,
+    color-mix(in oklab, var(--panel) 55%, transparent);
+  animation: mmd-shimmer 1.4s ease-in-out infinite;
+}
+pre.mermaid::after {
+  content: "Rendering diagram…";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+  font-family: var(--font);
+  font-size: 12.5px;
+}
+@keyframes mmd-shimmer {
+  from {
+    background-position:
+      130% 0,
+      0 0;
+  }
+  to {
+    background-position:
+      -130% 0,
+      0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  pre.mermaid {
+    animation: none;
+  }
+}
+.mermaid-err {
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid color-mix(in oklab, var(--warn) 32%, transparent);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  padding: 8px 14px;
+  margin: 1.5em 0 0;
+  max-width: var(--measure);
+}
+.mermaid-err + .code {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+/* Enlarge overlay: click a diagram to open it big and scrollable; click the
+   backdrop or press Escape to close. */
+#mmd-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 4vw;
+  background: color-mix(in oklab, var(--bg) 82%, transparent);
+  cursor: zoom-out;
+}
+#mmd-zoom.on {
+  display: flex;
+}
+.mmd-zoom-inner {
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  padding: 28px;
+  background: var(--pane);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  cursor: default;
+}
+.mmd-zoom-inner svg {
+  width: auto;
+  height: auto;
+  max-width: none;
+}
+/* A table is a block, not more prose: it takes the same surface, border and
+         header band as table.grid in Status and Config, so it reads as an object
+         when you scroll a long document instead of dissolving into the text. */
 .md table {
+  display: table;
   border-collapse: collapse;
   width: 100%;
   max-width: var(--measure);
-  margin: 1.1em 0;
-  font-size: 13.5px;
+  margin: 1.9em 0;
+  font-size: 14px;
+  /* Same fill as every other document block (pre, blockquote, inline code): a
+     table sitting next to a code block must not read as a different material.
+     --panel recedes in light and lifts in dark, so the direction is consistent
+     within each theme; --surface went the other way and produced a visible
+     step between two adjacent blocks. */
+  background: color-mix(in oklab, var(--panel) 60%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  overflow: hidden;
 }
+/* --dim, not --faint: --faint is 4.27:1 on the surface and 3.77:1 on the
+         header band, under AA at this size. --dim clears it at 5.17:1. */
 .md th {
-  font-size: 10.5px;
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--faint);
+  letter-spacing: 0.055em;
+  color: var(--dim);
   text-align: left;
-  padding: 8px 14px 8px 0;
-  border-bottom: 1.5px solid var(--line);
+  background: var(--panel);
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--line);
 }
 .md td {
-  padding: 10px 14px 10px 0;
+  padding: 11px 16px;
   border-bottom: 1px solid var(--hair);
   vertical-align: top;
+  line-height: 1.55;
+}
+.md tr:last-child td {
+  border-bottom: 0;
 }
 .md td code {
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .md ul,
 .md ol {
-  padding-left: 20px;
-  margin: 0.9em 0;
+  padding-left: 22px;
+  margin: 0.75em 0;
   max-width: var(--measure);
 }
+/* Same size as a paragraph: a list item is body text, and 14.5 against 15
+         was a step nobody can perceive as deliberate. */
 .md li {
-  font-size: 14.5px;
-  line-height: 1.62;
-  margin: 0.5em 0;
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 0.34em 0;
 }
-/* Blockquotes align to the same indent as lists (no side-stripe border),
-         set apart by muted colour only. */
+/* Nested lists (the renderer keeps the indentation) sit tighter than their
+         parent and switch marker so the level is readable. */
+.md li > ul,
+.md li > ol {
+  margin: 0.3em 0;
+}
+.md ul ul {
+  list-style: circle;
+}
+/* Blockquotes take a surface like the other blocks — no side-stripe border,
+         which is banned — instead of being set apart by muted colour alone. */
 .md blockquote {
-  margin: 0.6em 0;
-  padding-left: 20px;
+  margin: 1.4em 0;
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--panel) 60%, transparent);
   max-width: var(--measure);
-  color: var(--dim);
+  color: var(--prose);
 }
-/* Divider: matches the shared measure, with generous vertical breathing room */
+.md blockquote p {
+  margin: 0.25em 0;
+}
+/* Divider: full column width, with generous vertical breathing room */
 .md hr {
   max-width: var(--measure);
-  margin: 2em 0;
+  margin: 2.6em 0;
   border: 0;
   border-top: 1px solid var(--line);
 }
@@ -1438,7 +1898,7 @@ html::-webkit-scrollbar-thumb:hover,
 .md li.task::before {
   content: "";
   position: absolute;
-  left: -20px;
+  left: -22px;
   top: 0.3em;
   width: 12px;
   height: 12px;
@@ -1452,7 +1912,7 @@ html::-webkit-scrollbar-thumb:hover,
 .md li.task.done::after {
   content: "";
   position: absolute;
-  left: -15px;
+  left: -17px;
   top: 0.42em;
   width: 4px;
   height: 7px;
@@ -1489,7 +1949,7 @@ html::-webkit-scrollbar-thumb:hover,
   background: var(--err-soft);
 }
 .syncbox {
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 15px;
   padding: 18px 20px;
@@ -1529,7 +1989,7 @@ table.grid {
   display: table; /* beat the `.grid` (display:grid) card-grid rule */
   border-collapse: collapse;
   width: 100%;
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 11px;
   overflow: hidden;
@@ -1582,7 +2042,7 @@ table.grid .mono {
 
 /* ── changes ────────────────────────────────────────────────────────── */
 .changes-list {
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 11px;
   padding: 4px 16px;
@@ -1614,7 +2074,7 @@ table.grid .mono {
 }
 pre.plain {
   overflow-x: auto;
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 11px;
   padding: 14px 16px;
@@ -1633,57 +2093,31 @@ pre.plain.wrap {
   font-style: italic;
 }
 .tok-kw {
-  color: oklch(52% 0.15 300);
+  color: var(--tok-kw);
 }
 .tok-str {
-  color: oklch(48% 0.13 150);
+  color: var(--tok-str);
 }
 .tok-num {
-  color: oklch(52% 0.14 55);
+  color: var(--tok-num);
 }
 .tok-bool {
-  color: oklch(50% 0.13 190);
+  color: var(--tok-bool);
 }
 .tok-fn {
-  color: oklch(49% 0.13 255);
+  color: var(--tok-fn);
 }
 .tok-prop {
-  color: oklch(48% 0.12 205);
+  color: var(--tok-prop);
 }
 .tok-tag {
-  color: oklch(52% 0.16 20);
+  color: var(--tok-tag);
 }
 .tok-attr {
-  color: oklch(52% 0.13 75);
+  color: var(--tok-attr);
 }
 .tok-punct {
   color: var(--dim);
-}
-@media (prefers-color-scheme: dark) {
-  .tok-kw {
-    color: oklch(80% 0.12 300);
-  }
-  .tok-str {
-    color: oklch(78% 0.13 150);
-  }
-  .tok-num {
-    color: oklch(80% 0.11 55);
-  }
-  .tok-bool {
-    color: oklch(78% 0.11 190);
-  }
-  .tok-fn {
-    color: oklch(78% 0.12 255);
-  }
-  .tok-prop {
-    color: oklch(80% 0.1 205);
-  }
-  .tok-tag {
-    color: oklch(77% 0.14 20);
-  }
-  .tok-attr {
-    color: oklch(81% 0.12 75);
-  }
 }
 .dadd {
   color: var(--ok);
@@ -1708,7 +2142,7 @@ pre.plain.wrap {
   background: oklch(0% 0 0 / 0.4);
 }
 .helpcard {
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: var(--shadow);
@@ -1809,13 +2243,15 @@ pre.plain.wrap {
   color: var(--dim);
   padding: 22px;
   text-align: center;
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 11px;
   max-width: 92ch;
 }
-/* the library "no matches" box spans the content, not the 92ch prose cap */
-#noresult {
+/* the "no matches" box spans the content, not the 92ch prose cap — in the
+   vault library and in a read-only source alike */
+#noresult,
+#srcnoresult {
   max-width: none;
 }
 
@@ -1836,7 +2272,7 @@ textarea.txt {
   padding: 9px 12px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: var(--surface);
+  background: var(--raised);
   color: var(--fg);
   font: inherit;
   font-size: 14px;
@@ -1871,11 +2307,165 @@ textarea.txt {
   color: var(--dim);
 }
 
+/* A picture read from the rail: the border and the radius the viewer gives
+   every block, and a width fillColumn() sets from the file's own resolution. */
+.preview {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+/* ── lightbox ───────────────────────────────────────────────────────────
+   The picture over the page. Its own dark field in both themes: a photograph
+   is judged against a neutral surround, and a light one would tint what is
+   being looked at. Chrome is drawn in translucent white on that field rather
+   than in the theme tokens, which are calibrated for the page underneath. */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: block;
+  background: oklch(18% 0.015 245 / 0.86);
+  backdrop-filter: blur(3px);
+  color: oklch(96% 0.005 240);
+}
+.lightbox:focus {
+  outline: none;
+}
+.lightbox[hidden] {
+  display: none;
+}
+/* The page behind must not scroll under an open picture. */
+body.lbopen {
+  overflow: hidden;
+}
+/* The bar rides over the field rather than taking a row of it: with the
+   picture in the room left under a bar, it sat half a bar-height low. Centred
+   in the viewport is what centred means here. */
+.lbbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+}
+.lbname {
+  font-family: var(--mono);
+  font-size: 12px;
+  opacity: 0.92;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lbcount {
+  font-family: var(--mono);
+  font-size: 11px;
+  opacity: 0.6;
+  flex: none;
+}
+.lbacts {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.lbbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid oklch(100% 0 0 / 0.16);
+  background: oklch(100% 0 0 / 0.06);
+  color: inherit;
+  cursor: pointer;
+}
+.lbbtn:hover,
+.lbnav:hover {
+  background: oklch(100% 0 0 / 0.15);
+}
+.lbbtn:focus-visible,
+.lbnav:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The picture sits in the room the bar leaves, with the same air under it as
+   beside it, so it reads as centred rather than as resting on the bottom. */
+.lbstage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 64px;
+  grid-template-rows: minmax(0, 1fr);
+  align-items: center;
+  min-height: 0;
+  /* Clears the bar at both ends, so the picture is centred and never slides
+     under the filename. */
+  padding: 64px 10px;
+}
+/* Stretched, not centred: a centred item is sized by its content, and a
+   percentage cap on content-sized height resolves against the picture itself —
+   which is how a tall photograph ran past the bottom of the screen. */
+.lbpic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.lbpic img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
+  object-fit: contain;
+  display: block;
+}
+.lbpic.bad {
+  font-family: var(--mono);
+  font-size: 12px;
+  opacity: 0.7;
+}
+.lbnav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  justify-self: center;
+  border-radius: 999px;
+  border: 1px solid oklch(100% 0 0 / 0.16);
+  background: oklch(100% 0 0 / 0.06);
+  color: inherit;
+  cursor: pointer;
+}
+/* Under 700px the two chevrons would take a quarter of the width from the
+   picture. They stay — they are the only way through — but give most of that
+   width back. */
+@media (max-width: 700px) {
+  .lbstage {
+    grid-template-columns: 40px minmax(0, 1fr) 40px;
+    padding: 64px 4px;
+  }
+  .lbnav {
+    width: 34px;
+    height: 34px;
+  }
+}
+
 /* ── dialog + toast ─────────────────────────────────────────────────── */
 dialog {
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: var(--surface);
+  background: var(--raised);
   color: var(--fg);
   max-width: 540px;
   padding: 22px;
@@ -1999,20 +2589,37 @@ body.fixed #app > .configlayout {
 /* library: full-bleed two-pane (rail on --bg, main on --surface) */
 .liblayout {
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+/* When the source switcher band is present it takes its own row above both
+   columns; the rail/main row then owns the remaining height and scrolls. */
+.liblayout.hasband {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.srcband {
+  grid-column: 1 / -1;
+  background: var(--shell);
+  border-bottom: 1px solid var(--line);
+  padding: 11px 20px;
+}
+.srcchips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
 }
 .liblayout .librail {
   min-height: 0;
   overflow-y: auto;
-  background: var(--bg);
+  background: var(--shell);
   border-right: 1px solid var(--line);
-  padding: 20px 14px 28px;
+  padding: 20px 20px 28px;
 }
 .libmain {
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
-  background: var(--surface);
+  background: var(--pane);
   padding: 26px 36px 90px;
 }
 .libmain .grid {
@@ -2022,6 +2629,9 @@ body.fixed #app > .configlayout {
   .liblayout {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
+  }
+  .liblayout.hasband {
+    grid-template-rows: auto auto 1fr;
   }
   .liblayout .librail {
     border-right: 0;
@@ -2059,6 +2669,99 @@ h1.view {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr) 300px;
 }
+
+/* Below 1100px the three-pane detail stops being three panes. The rails keep
+   560px of fixed width while the document column takes whatever is left, which
+   at 860px viewport measured 300px — a 35-character line. Each rail becomes an
+   overlay called up from a button in the document head, so the reading column
+   keeps the width it needs. The buttons only exist below the breakpoint. */
+.panebtn {
+  display: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--dim);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.panebtn:hover {
+  color: var(--fg);
+  border-color: var(--dim);
+}
+.panebtn[aria-expanded="true"] {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+  /* The pane floats over the document, so the document has to read as
+     out-of-reach: without the veil the overlay looks like a third column that
+     happens to overlap, and "click the page to dismiss" is not discoverable. */
+  .layout.show-meta::before,
+  .layout.show-files::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 49;
+    background: light-dark(oklch(26% 0.018 245 / 0.28), oklch(0% 0 0 / 0.45));
+  }
+  .panebtn.meta {
+    display: inline-block;
+  }
+  .layout > .meta {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(320px, 86vw);
+    z-index: 50;
+    border-left: 1px solid var(--line);
+    background: var(--pane);
+    transform: translateX(100%);
+    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+    overflow-y: auto;
+  }
+  .layout.show-meta > .meta {
+    transform: none;
+    box-shadow: var(--shadow);
+  }
+}
+@media (max-width: 820px) {
+  .layout,
+  .layout.srclayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .panebtn.files {
+    display: inline-block;
+    margin-right: 2px;
+  }
+  .layout > .rail {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(300px, 86vw);
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .layout.show-files > .rail {
+    transform: none;
+    box-shadow: var(--shadow);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .layout > .meta,
+  .layout > .rail {
+    transition: none;
+  }
+}
 /* grid children must be allowed to shrink so each column scrolls on its own */
 .layout > * {
   min-height: 0;
@@ -2074,7 +2777,7 @@ h1.view {
 }
 .rail {
   border-right: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--pane);
   padding: 18px 0 0;
   display: flex;
   flex-direction: column;
@@ -2138,7 +2841,7 @@ h1.view {
 }
 .meta {
   border-left: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--pane);
   padding: 18px 0;
   overflow-y: auto;
 }
@@ -2167,6 +2870,102 @@ h1.view {
 #viewer .md {
   padding-left: 0;
   padding-right: 0;
+}
+/* Gallery: every image the skill carries, one section per folder. The tile is
+         the picture — border only, no shadow, so a grid of forty stays one flat
+         plane rather than forty raised objects. Square crops because the set is
+         scanned for what is in the frame, not for how each file is shaped; the
+         file itself opens uncropped one click away. */
+.galsec + .galsec {
+  margin-top: 30px;
+}
+.galhead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+.galdir {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.galn {
+  font-size: 10.5px;
+  color: var(--faint);
+}
+.galgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 16px 14px;
+}
+.galtile {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.galimg {
+  display: block;
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel);
+  transition: border-color 0.12s ease;
+}
+.galimg img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* A drawing is its whole shape: a logo or a diagram cropped to a square is no
+         longer the thing being looked at, so vectors fit inside the tile while
+         photographs fill it. */
+.galimg.vec {
+  background: var(--pane);
+}
+.galimg.vec img {
+  object-fit: contain;
+  padding: 12px;
+  box-sizing: border-box;
+}
+.galtile:hover .galimg {
+  border-color: var(--accent);
+}
+.galtile:focus-visible {
+  outline: none;
+}
+.galtile:focus-visible .galimg {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.galname {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A thumbnail that failed to read says so in its own tile: an empty square in
+         a grid of pictures reads as a missing asset, which is another problem. */
+.galimg.bad {
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
 }
 .rvhead {
   display: flex;
@@ -2312,7 +3111,7 @@ h1.view {
 }
 .statusrail {
   border-left: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--pane);
   overflow-y: auto;
   padding: 22px 22px 40px;
 }
@@ -2434,7 +3233,7 @@ h1.view {
 }
 .plan .fmbox {
   margin-top: 14px;
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 11px 13px;
@@ -2518,7 +3317,7 @@ h1.view {
          views' full-bleed shell so Config is no longer a narrow centered box. */
 .configlayout {
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr);
 }
 .setnav.cfgrail {
   position: static;
@@ -2536,7 +3335,7 @@ h1.view {
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
-  background: var(--surface);
+  background: var(--pane);
   padding: 28px 36px 90px;
 }
 /* One content column, centered, same width on every pane so the box does
@@ -2582,11 +3381,11 @@ h1.view {
   align-items: center;
 }
 .setnav a:hover {
-  background: var(--panel);
+  background: var(--hover);
 }
 .setnav a.on {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-ink);
   font-weight: 600;
 }
 .setnav .tiny {
@@ -2612,7 +3411,7 @@ h1.view {
   padding: 2px 12px 6px;
 }
 .panel {
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 14px;
   box-shadow: var(--shadow-sm);
@@ -2748,7 +3547,7 @@ h1.view {
 .fmcard {
   border: 1px solid var(--line);
   border-radius: 11px;
-  background: var(--surface);
+  background: var(--raised);
   margin: 6px 0 18px;
   overflow: hidden;
 }
@@ -2803,6 +3602,13 @@ h1.view {
   align-items: flex-start;
   gap: 11px;
 }
+/* The reading measure belongs to the rows that are prose-like, not to the
+   section: a waiver is a block the eye parses as a unit, and clamping it to the
+   description's column left it looking cut off next to a full-width pane. */
+.skillmeta .smchips,
+.skillmeta .smline {
+  max-width: 72ch;
+}
 .skillmeta .smchips {
   display: flex;
   flex-wrap: wrap;
@@ -2814,7 +3620,7 @@ h1.view {
   font-family: var(--mono);
   font-size: 10.5px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-ink);
   background: var(--accent-soft);
   border-radius: 20px;
   padding: 3px 10px;
@@ -2908,7 +3714,7 @@ h1.view {
   height: auto;
   font-family: var(--mono);
   font-size: 11px;
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   color: var(--dim);
   border-radius: 20px;
@@ -2922,7 +3728,7 @@ h1.view {
 .fmcard .chip.model,
 .skillmeta .chip.model {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-ink);
   border-color: transparent;
 }
 .fmcard .chip.deny,
@@ -2970,7 +3776,7 @@ a.chip.fmlink,
 }
 .chip.accent {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 .chip.code {
   font-family: var(--mono);
@@ -3048,7 +3854,7 @@ button.chip {
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.06em;
-  color: var(--accent);
+  color: var(--accent-ink);
   border: 1px solid var(--accent-soft);
   border-radius: 5px;
   padding: 1px 5px;
@@ -3138,7 +3944,7 @@ button.chip {
 }
 .rxerr {
   font-size: 11.5px;
-  color: var(--err);
+  color: var(--err-ink);
 }
 .dockbar {
   display: flex;
@@ -3333,7 +4139,7 @@ main.emptyview {
   color: var(--dim);
   padding: 22px;
   text-align: center;
-  background: var(--surface);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 11px;
 }
@@ -3361,6 +4167,82 @@ main.emptyview {
 }
 .histhd .railh {
   padding: 0;
+}
+/* "Active on" header row: section label left, the "Link everywhere" shortcut
+   right (shown only when the skill isn't linked on every runtime yet). */
+.railhrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 0 8px;
+}
+.railhrow .railh {
+  padding: 0;
+}
+.linkall {
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--accent);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 2px 7px;
+  cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+/* Status coverage: the "Link all" shortcut lives in its own trailing cell,
+   right-aligned at the row edge; empty on rows that are already fully linked, so
+   the column collapses to padding when nothing needs linking. */
+.coverage table.grid td.rowact,
+.coverage table.grid th.rowacth {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+.linkall:hover {
+  background: var(--accent-soft);
+}
+/* Read-only source browse: source-switcher chips, source metadata, banner. */
+.srcchip {
+  flex: none;
+  font-family: var(--font);
+  font-size: 12.5px;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 13px;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  white-space: nowrap;
+}
+.srcchip:hover {
+  border-color: var(--dim);
+  color: var(--fg);
+}
+.srcchip.on {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.srcchip .n {
+  font-family: var(--mono);
+  font-size: 11px;
+  opacity: 0.7;
+}
+.srobanner {
+  font-size: 12.5px;
+  color: var(--dim);
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin: 0 0 16px;
 }
 /* The tracked filename sits next to "History" (mono, dim); margin-right
          auto keeps it left-grouped and pushes the "Back" button to the right.
@@ -3408,4 +4290,1023 @@ main.emptyview {
   margin-right: 0.34em;
   vertical-align: -0.09em;
   box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.4);
+}
+
+/* ── graph-freshness badge ─────────────────────────────────────────── */
+.fresh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--faint);
+  background: var(--panel);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 4px 9px 4px 8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fresh-pill:hover {
+  border-color: var(--line);
+}
+.fresh-pill .d {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--faint);
+}
+.fresh-pill.ok {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+.fresh-pill.ok .d {
+  background: var(--ok);
+}
+.fresh-pill.warn {
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+}
+.fresh-pill.warn .d {
+  background: var(--warn);
+}
+.fresh-pill.bad {
+  color: var(--err-ink);
+  background: var(--err-soft);
+}
+.fresh-pill.bad .d {
+  background: var(--err);
+}
+/* The sub-label ("· 1 behind") takes the pill's own colour, not a neutral grey.
+   A grey at --faint measured 3.74:1 in dark and 3.30 in light against the warn
+   fill — under the floor, and washed out besides: the grey is blue-hued (240)
+   and the fill amber (74), so the two fight each other at 11.5px. It stays
+   secondary through weight and the separator, which survive at this size where
+   a colour step does not. */
+.fresh-pill .k {
+  font-weight: 500;
+}
+.fresh-pill .chev {
+  font-size: 9px;
+  opacity: 0.5;
+  margin-left: -1px;
+}
+
+#fresh-pop {
+  position: fixed;
+  margin: 0;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--raised);
+  color: var(--fg);
+  box-shadow: var(--shadow);
+  padding: 15px 15px 14px;
+}
+/* The flex column that gives the family list its scroll region belongs on the
+   OPEN state only. `#fresh-pop { display: flex }` is an ID selector, so it beats
+   the UA rule `[popover]:not(:popover-open) { display: none }` and the panel
+   stops being a popover at all: it paints on load with no coordinates, ignores
+   hidePopover(), and sits under the header because it never enters the top
+   layer. */
+#fresh-pop:popover-open {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* Only the family list scrolls: head, status and bar stay in normal flow above
+   it. `min-height: 0` is load-bearing — a flex child refuses to shrink below its
+   content without it, and nothing would scroll at all. */
+.fp-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Bleed to the panel edges: rows run the full width and the last visible one
+     is cut by the panel edge, which is the scroll affordance. */
+  margin: 0 -15px -14px;
+  padding: 0 15px 14px;
+}
+.fp-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 11px;
+}
+.fp-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.fp-when {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.fp-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.fp-status .d {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--faint);
+}
+.fp-status.ok {
+  color: var(--ok);
+}
+.fp-status.ok .d {
+  background: var(--ok);
+}
+.fp-status.warn {
+  color: var(--warn);
+}
+.fp-status.warn .d {
+  background: var(--warn);
+}
+.fp-status.bad {
+  color: var(--err);
+}
+.fp-status.bad .d {
+  background: var(--err);
+}
+.fp-status.off {
+  color: var(--faint);
+}
+.fp-behind {
+  font-size: 12px;
+  color: var(--faint);
+  margin: 5px 0 0 18px;
+}
+.fp-behind b {
+  color: var(--dim);
+  font-weight: 600;
+}
+.fp-ok {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 13px;
+  border: 1px dashed var(--line);
+  border-radius: 11px;
+  color: var(--dim);
+  font-size: 12.5px;
+}
+.fp-ok .ic {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--ok-soft);
+  color: var(--ok);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.fp-ok.muted .ic {
+  background: var(--panel);
+  color: var(--faint);
+}
+.fp-div {
+  height: 1px;
+  background: var(--hair);
+  margin: 13px -15px 12px;
+}
+/* Per-family run rows. A family is one line: name, size, state. The dot is the
+   only colour, so a run scans in one pass and the failures are the only thing
+   that stops the eye. */
+.fp-sec {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 13px 0 5px;
+}
+.fp-bar {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--panel);
+  overflow: hidden;
+  margin: 11px 0 2px;
+  flex: none;
+}
+/* The two segments stack rather than sit side by side, and grow by scaleX from
+   the left edge: width is a layout property, transform is not, so the bar
+   animates on the compositor. Green (applied) paints over teal (extracted),
+   which is why the done layer comes second in the DOM. */
+.fp-bar i {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  background: var(--accent);
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.fp-bar i.done {
+  background: var(--ok);
+}
+@media (prefers-reduced-motion: reduce) {
+  .fp-bar i {
+    transition: none;
+  }
+}
+.fp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hair);
+  font-size: 12.5px;
+}
+.fp-row:last-child {
+  border-bottom: 0;
+}
+.fp-row .d {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--faint);
+  flex: none;
+}
+.fp-row .fp-sub {
+  color: var(--faint);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fp-row .fp-state {
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 11.5px;
+  flex: none;
+}
+.fp-row.done .d {
+  background: var(--ok);
+}
+.fp-row.done .fp-state {
+  color: var(--ok);
+}
+.fp-row.running .d {
+  background: var(--accent);
+  animation: fp-pulse 1.4s infinite;
+}
+.fp-row.running .fp-state {
+  color: var(--accent);
+}
+.fp-row.applying .d {
+  background: var(--accent);
+}
+.fp-row.applying .fp-state {
+  color: var(--dim);
+}
+.fp-row.failed .d {
+  background: var(--err);
+}
+.fp-row.failed .fp-state {
+  color: var(--err);
+}
+.fp-row.stale .d {
+  background: var(--warn);
+}
+/* The openable line the finished families fold into. Same row grammar (dot,
+   counts right), quieter voice: it is a summary, not a family. */
+.fp-collapse {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--dim);
+  cursor: pointer;
+  text-align: left;
+}
+.fp-collapse:hover {
+  color: var(--fg);
+}
+.fp-collapse .d {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ok);
+  flex: none;
+}
+.fp-collapse .n {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+.fp-collapse .cv {
+  font-size: 9px;
+  opacity: 0.5;
+}
+@keyframes fp-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fp-row.running .d {
+    animation: none;
+  }
+}
+.fp-fam {
+  margin-bottom: 12px;
+}
+.fp-fam:last-child {
+  margin-bottom: 0;
+}
+.fp-fam-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.fp-name {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.fp-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.fp-badge.warn {
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+}
+.fp-badge.bad {
+  color: var(--err-ink);
+  background: var(--err-soft);
+}
+.fp-reason {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 4px;
+}
+.fp-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 6px 6px 10px;
+}
+.fp-cmd code {
+  flex: 1;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--prose);
+}
+.fp-cmd .fresh-copy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.fp-cmd .fresh-copy:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.fp-auto {
+  font-size: 11px;
+  color: var(--faint);
+  font-style: italic;
+  margin-top: 5px;
+}
+
+/* ---------- map view ---------- */
+/* One circle per skill inside its group, on the same plane as the table it
+   replaces. The plot scrolls; the inspector beside it stays put, because the
+   thing you clicked and what it means should never be a scroll apart. */
+.maplayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+.mapplot {
+  min-width: 0;
+  overflow-x: auto;
+}
+.mapplot svg {
+  display: block;
+}
+/* The inspector pins to the top of the column and stays there for the whole
+   map — what you clicked and what it means must never be a scroll apart.
+
+   Three things have to hold at once, and each of the first two was tried alone
+   and failed. A sticky box comes loose the moment it is taller than the room
+   between the top it pins to and the bottom of its containing block, and the
+   map's block ends before the scroll does: unbounded, the panel slid up in the
+   last stretch. Bounded but plain-scrolling, its own scrollbar carried its
+   heading away as you read, which is the same panel leaving by another door.
+   And a panel that only pins when it happens to fit is pinned on a tall window
+   and gone on a short one, which is worse than either.
+
+   So: always pinned, capped to the room that exists (--insp-max, measured in
+   fitInspector because the scrollport sits under a header and a source band
+   whose heights are not this file's to assume), and the heading pinned again
+   inside the panel so what the column is about survives its own scrolling. */
+.mapinsp {
+  position: sticky;
+  top: 0;
+  border-left: 1px solid var(--hair);
+  padding-left: 18px;
+  min-height: 200px;
+  max-height: var(--insp-max, none);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.mapinsp > .mi-head,
+.mapinsp > .mi-empty:first-child {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--pane);
+  padding-bottom: 8px;
+}
+/* Stacked, the two are one column again: the inspector reads as what follows
+   the map rather than as what sits beside it, so nothing pins and nothing is
+   capped. */
+@media (max-width: 1100px) {
+  .maplayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mapinsp {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    border-left: 0;
+    border-top: 1px solid var(--hair);
+    padding: 16px 0 0;
+  }
+  .mapinsp > .mi-head,
+  .mapinsp > .mi-empty:first-child {
+    position: static;
+    padding-bottom: 0;
+  }
+}
+/* The state of the graph, said above the map instead of in place of it. The
+   map underneath is real in every one of these states — only the edges are
+   missing — so this is a line, not a panel: it sits on the canvas' own plane,
+   carries no fill, and disappears the moment there is nothing to report. */
+.mapcol {
+  min-width: 0;
+}
+.mapstrip:empty {
+  display: none;
+}
+.mapstrip-in {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 2px 12px;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.mapstrip-in .d {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.mapstrip-in .t {
+  min-width: 0;
+}
+.mapstrip-in b {
+  color: var(--fg);
+  font-weight: 650;
+}
+.mapstrip-in .a {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+/* Without the graph the circles are placed but say nothing about relations:
+   they read as provisional until the edges land on top of them. */
+.mapplot.skeleton .mnode {
+  opacity: 0.45;
+}
+.mfield {
+  fill: color-mix(in oklab, var(--panel) 55%, transparent);
+  stroke: var(--hair);
+}
+.mgt {
+  font: 600 11.5px var(--font);
+  fill: var(--dim);
+}
+.mgn {
+  font: 400 11px var(--font);
+  fill: var(--faint);
+}
+.medge {
+  fill: none;
+  stroke: var(--line);
+  stroke-linecap: round;
+  cursor: pointer;
+  transition:
+    stroke 0.15s var(--ease),
+    opacity 0.15s var(--ease);
+}
+.medge:hover,
+.medge.hot {
+  stroke: var(--accent);
+}
+/* A mention is not an extracted relation and must never read like one: dashed,
+   quieter, and off until asked for. */
+.mment {
+  fill: none;
+  stroke: var(--faint);
+  stroke-dasharray: 3 4;
+  opacity: 0.55;
+  cursor: pointer;
+  transition:
+    stroke 0.15s var(--ease),
+    opacity 0.15s var(--ease);
+}
+.mment:hover,
+.mment.hot {
+  stroke: var(--accent);
+  opacity: 1;
+}
+.mnode {
+  cursor: pointer;
+}
+.mnode .mb {
+  fill: color-mix(in oklab, var(--tint) 16%, var(--pane));
+  stroke: var(--tint);
+  stroke-width: 1.5;
+  transition:
+    fill 0.15s var(--ease),
+    stroke-width 0.15s var(--ease);
+}
+.mnode:hover .mb {
+  fill: color-mix(in oklab, var(--tint) 32%, var(--pane));
+}
+.mnode.sel .mb {
+  stroke-width: 2.6;
+  fill: color-mix(in oklab, var(--tint) 40%, var(--pane));
+}
+.mnode .mnl {
+  font: 400 9.6px var(--font);
+  fill: var(--faint);
+  text-anchor: middle;
+  pointer-events: none;
+}
+.mnode:hover .mnl,
+.mnode.sel .mnl {
+  fill: var(--fg);
+  font-weight: 600;
+}
+.mdupe {
+  fill: var(--warn);
+}
+.mcode {
+  fill: var(--accent);
+}
+.mapplot.focused .mnode:not(.hit) {
+  opacity: 0.17;
+}
+.mapplot.focused .medge:not(.hot),
+.mapplot.focused .mment:not(.hot) {
+  opacity: 0.1;
+}
+/* Dozens of dashed mention lines at once are a haze; a selection cuts through
+   to the ones that belong to it. */
+.mapplot.hassel .mment:not(.hot) {
+  opacity: 0.12;
+}
+.librail .ritem .ln {
+  width: 16px;
+  border-top: 2px solid var(--dim);
+  flex: none;
+}
+.librail .ritem .ln.dash {
+  border-top-style: dashed;
+  border-color: var(--faint);
+}
+.librail .ritem[disabled] {
+  cursor: default;
+}
+.librail .ritem.lens .d {
+  border-radius: 2px;
+  background: var(--dim);
+}
+.mi-head h3 {
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 0;
+  letter-spacing: -0.012em;
+}
+.mi-head .ar {
+  color: var(--accent);
+}
+.mi-stamp {
+  font-size: 12px;
+  color: var(--faint);
+  margin-top: 3px;
+}
+.mi-sec {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 18px 0 6px;
+}
+/* With a filter on, the findings count what is drawn and the coverage counts
+   the vault: one line so the two scopes in the panel are not read as one. */
+.mi-scope {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--prose);
+}
+.mi-scope b {
+  color: var(--fg);
+}
+.mi-desc {
+  font-size: 13px;
+  color: var(--prose);
+  margin: 9px 0 0;
+}
+.mi-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+.mchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--prose);
+  background: var(--panel);
+}
+.mchip .d {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tint, var(--dim));
+}
+.mrel {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  flex: none;
+}
+.mi-kv {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin: 0;
+}
+.mi-kv dt,
+.mi-kv dd {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--hair);
+  font-size: 13px;
+  margin: 0;
+  min-width: 0;
+}
+.mi-kv dt {
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mi-kv dd {
+  color: var(--fg);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.mi-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 7px;
+  margin: 0 -7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--prose);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.mi-row:hover {
+  background: var(--hover);
+}
+.mi-row .nm {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mi-row .w {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.mi-note {
+  font-size: 12.5px;
+  color: var(--faint);
+  margin: 8px 0 0;
+}
+.mi-flag {
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--warn) 10%, transparent);
+  font-size: 12.5px;
+  color: var(--prose);
+  margin-top: 8px;
+}
+.mi-flag b {
+  color: var(--fg);
+}
+.mi-pair {
+  font-size: 12.5px;
+  color: var(--prose);
+  padding: 7px 9px;
+  background: color-mix(in oklab, var(--panel) 60%, transparent);
+  border-radius: 8px;
+  margin-top: 7px;
+}
+.mi-pair em {
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+.mi-btns {
+  display: flex;
+  gap: 7px;
+  margin-top: 16px;
+}
+.mi-btn {
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--raised);
+  font: inherit;
+  font-size: 13px;
+  color: var(--prose);
+  cursor: pointer;
+}
+.mi-btn:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.mi-btn.p {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--btn-fg);
+  font-weight: 550;
+}
+.mi-empty {
+  font-size: 13px;
+  color: var(--faint);
+}
+.mi-empty b {
+  color: var(--fg);
+}
+
+/* Proposte cross-famiglia sotto soglia: si leggono come una citazione, non come
+   una relazione del grafo, perche' non lo sono ancora. */
+.mi-weak {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--hair);
+}
+.mi-weak:last-of-type {
+  border-bottom: 0;
+}
+.mi-weak-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.mi-weak-top .nm {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mi-weak-top .w {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+/* Stessa materia dei blocchi del viewer (--panel al 60%), non una barretta
+   colorata a sinistra: la prova e' una citazione, e il documento la tratta gia'
+   cosi' altrove. */
+.mi-weak-ev {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--panel) 60%, transparent);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--dim);
+  text-align: left;
+  cursor: pointer;
+}
+/* Two lines to triage on, the rest on request: the evidence is a paragraph and
+   eight of them at full length are the wall this panel was. The clamp lives on
+   an inner box because overflow clips at the padding edge, not the content
+   edge — on the button itself a third line shows through the bottom padding. */
+.mi-weak-ev.clamp > span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mi-weak-ev:hover {
+  color: var(--prose);
+}
+/* A finding that owns a list says so, and the way back sits where the reading
+   starts rather than at the end of what was read. */
+.mi-row .chev {
+  color: var(--faint);
+  font-size: 14px;
+}
+.mi-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mi-back:hover {
+  text-decoration: underline;
+}
+/* The proposals, in place of the map. Homogeneous records — pair, evidence,
+   score — so they take the ledger's shape: the rail still filters them, the
+   content area gives the evidence a real column, and the table scrolls the way
+   the library's does instead of paging a rail that was never wide enough. */
+.propsview {
+  min-width: 0;
+}
+.pw-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 14px;
+}
+.pw-head h2 {
+  margin: 0;
+  font-size: 19px;
+  color: var(--fg);
+  letter-spacing: -0.015em;
+}
+.pw-head .cnt {
+  font-size: 13px;
+  color: var(--faint);
+}
+.pw-head .why {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--faint);
+}
+table.propsw {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+table.propsw td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--hair);
+  vertical-align: top;
+}
+table.propsw .pw-sec td {
+  padding: 18px 12px 6px;
+  border-bottom: 0;
+}
+.pw-grp:first-child .pw-sec td {
+  padding-top: 4px;
+}
+.pw-sechead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pw-sechead h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.pw-sechead .n {
+  color: var(--faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.pw-pair {
+  width: 30%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pw-sk {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--fg);
+  cursor: pointer;
+}
+.pw-sk:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+.pw-arr {
+  margin: 0 7px;
+  color: var(--faint);
+}
+.pw-ev {
+  color: var(--dim);
+  line-height: 1.5;
+}
+/* Two lines to scan, the whole paragraph on click — same rule as the rail had,
+   except here two lines are a hundred and forty characters, not forty-five. */
+.pw-ev span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+tr.open .pw-ev span {
+  -webkit-line-clamp: unset;
+}
+.pw-sc {
+  width: 56px;
+  text-align: right;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+table.propsw tbody tr[data-prop]:hover {
+  background: var(--hover);
+  cursor: pointer;
 }

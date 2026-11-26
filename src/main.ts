@@ -4,23 +4,28 @@ import { runAdd } from "./commands/add.js";
 import { runLink } from "./commands/link.js";
 import { runStatus } from "./commands/status.js";
 import { runDoctor } from "./commands/doctor.js";
+import { runSchema } from "./commands/schema.js";
 import { runArchive } from "./commands/archive.js";
 import { runMigrate } from "./commands/migrate.js";
 import { runUi } from "./commands/ui.js";
 import { runSync } from "./commands/sync.js";
+import { runLossAudit } from "./commands/loss-audit.js";
 
 const USAGE = `skill-loom — one canonical vault of agent skills, symlinked into every runtime
 
 usage:
   skill-loom init
-  skill-loom add <name> [--domain <d>] [--layer <l>] [--status <s>] [--description <text>]
+  skill-loom add <name> [--<axis> <value>…] [--status <s>] [--description <text>]
   skill-loom link [--apply]
   skill-loom status
   skill-loom doctor
+  skill-loom schema
   skill-loom archive <name> [--apply]
   skill-loom migrate <old> <new> [--apply]
-  skill-loom ui [--port N] [--host ADDR] [--allow-remote-writes] [--no-open]
+  skill-loom ui [--port N] [--host ADDR] [--allow-remote-writes] [--no-open] [--brand-dir DIR]
   skill-loom sync [--apply] [--force]
+  skill-loom loss-audit [--base REV] [--min-word-retention 0.65] [--map old.md=new.md] [--map-term old=new] [path ...]
+  skill-loom loss-audit accept <file> --term <term> --reason "<why>" [--base REV]
 
 link, archive, migrate and sync are dry-run by default: nothing changes without --apply.
 Exit codes: 0 ok · 1 problems found · 2 usage/config error.`;
@@ -47,6 +52,28 @@ export function opt(args: string[], name: string): string | undefined {
   return next;
 }
 
+/** Whatever `--key value` pairs survive after the known flags were consumed:
+ *  taxonomy axis values (--domain, --area, …). addOp rejects keys the vault
+ *  does not declare, so a typo fails loudly instead of doing nothing. */
+export function collectAxisFlags(args: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (let i = 0; i < args.length;) {
+    const a = args[i];
+    if (!a.startsWith("--")) {
+      i++;
+      continue;
+    }
+    const next = args[i + 1];
+    if (next === undefined || next.startsWith("--")) {
+      args.splice(i, 1);
+      continue;
+    }
+    out[a.slice(2)] = next;
+    args.splice(i, 2);
+  }
+  return out;
+}
+
 export function main(argv: string[], cwd: string): number {
   const args = [...argv];
   const cmd = args.shift();
@@ -64,9 +91,8 @@ export function main(argv: string[], cwd: string): number {
       case "add": {
         const opts = {
           description: opt(args, "--description"),
-          domain: opt(args, "--domain"),
-          layer: opt(args, "--layer"),
           status: opt(args, "--status"),
+          taxonomy: collectAxisFlags(args),
         };
         return runAdd(cwd, args.shift(), opts);
       }
@@ -76,6 +102,15 @@ export function main(argv: string[], cwd: string): number {
         return runStatus(cwd);
       case "doctor":
         return runDoctor(cwd);
+      case "schema":
+        // Read-only, so a stray arg (e.g. a typo'd --apply) would otherwise
+        // be silently ignored — accepting it exits 0 having done nothing,
+        // implying the flag had an effect it didn't.
+        if (args.length > 0) {
+          console.error(`schema takes no arguments (got "${args[0]}")`);
+          return 2;
+        }
+        return runSchema(cwd);
       case "archive": {
         const apply = flag(args, "--apply");
         return runArchive(cwd, args.shift(), apply);
@@ -94,17 +129,21 @@ export function main(argv: string[], cwd: string): number {
         const host = opt(args, "--host");
         const noOpen = flag(args, "--no-open");
         const allowRemoteWrites = flag(args, "--allow-remote-writes");
+        const brandDir = opt(args, "--brand-dir");
         return runUi(cwd, {
           port: portNum,
           host,
           open: !noOpen,
           allowRemoteWrites,
+          brandDir,
         });
       }
       case "sync": {
         const apply = flag(args, "--apply");
         return runSync(cwd, apply, flag(args, "--force"));
       }
+      case "loss-audit":
+        return runLossAudit(cwd, args);
       default:
         console.error(`unknown command "${cmd}"\n\n${USAGE}`);
         return 2;

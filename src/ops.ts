@@ -8,16 +8,31 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { resolveConsumers, loadConfig, type LintConfig } from "./config.js";
+import {
+  resolveConsumers,
+  loadConfig,
+  resolveAxes,
+  type LintConfig,
+  type TaxonomyAxis,
+} from "./config.js";
 import {
   ARCHIVE_DIR,
   NAME_RE,
-  isActive,
+  STATUSES,
+  isProjectedStatus,
   parseFrontmatterField,
+  scanSkillAgents,
   scanVault,
   type Skill,
 } from "./vault.js";
-import { applyPlan, planLinks, setSkillLinks, resolveLink } from "./linker.js";
+import {
+  applyPlan,
+  ownedLinks,
+  planAgentLinks,
+  planLinks,
+  setSkillLinks,
+  resolveLink,
+} from "./linker.js";
 
 export interface OpOutcome {
   status: 0 | 1 | 2;
@@ -32,9 +47,9 @@ const DEFAULT_DESCRIPTION = "Describe when this skill should be used";
 
 export interface AddOptions {
   description?: string;
-  domain?: string;
-  layer?: string;
   status?: string;
+  /** Frontmatter taxonomy values keyed by axis id, e.g. {domain: "cross"}. */
+  taxonomy?: Record<string, string>;
 }
 
 export function addOp(
@@ -68,9 +83,20 @@ export function addOp(
   // Enforce the vault's required taxonomy at creation, so a new skill is born
   // compliant instead of failing the gate on its first sync.
   const lint = cfg.lint;
-  const taxo = { domain: opts.domain, layer: opts.layer, status: opts.status };
+  const axes = resolveAxes(cfg);
+  const ids = axes.map((a) => a.id);
+  const given = opts.taxonomy ?? {};
+  // A flag for an axis this vault does not declare is a typo, not a silent
+  // no-op: --layer on a domain/area/kind vault must fail loudly.
+  const unknown = Object.keys(given).filter((k) => !ids.includes(k));
+  if (unknown.length)
+    return {
+      status: 2,
+      message: `unknown taxonomy axis "${unknown[0]}" — this vault declares: ${ids.join(", ")}`,
+      actions: [],
+    };
   const missing = (lint?.requireTaxonomy ?? []).filter(
-    (k) => !taxo[k as keyof typeof taxo],
+    (k) => k !== "status" && !given[k],
   );
   if (missing.length) {
     return {
@@ -79,6 +105,14 @@ export function addOp(
       actions: [],
     };
   }
+  // `status` lived inside the same taxo object pre-split; it is a lifecycle
+  // field, not a taxonomy axis, so it is checked separately here.
+  if ((lint?.requireTaxonomy ?? []).includes("status") && !opts.status)
+    return {
+      status: 2,
+      message: "this vault's rules require status on every skill",
+      actions: [],
+    };
   // The vault is flat: a skill is a folder at the vault root named for the skill.
   const dir = path.join(vaultDir, name);
   const mdPath = path.join(dir, "SKILL.md");
@@ -94,7 +128,10 @@ export function addOp(
     " ",
   );
   mkdirSync(dir, { recursive: true });
-  writeFileSync(mdPath, buildSkillMd(name, desc, taxo, lint));
+  writeFileSync(
+    mdPath,
+    buildSkillMd(name, desc, given, opts.status, axes, lint),
+  );
   return {
     status: 0,
     message: `created ${mdPath}`,
@@ -108,23 +145,25 @@ export function addOp(
 function buildSkillMd(
   name: string,
   desc: string,
-  taxo: { domain?: string; layer?: string; status?: string },
+  taxo: Record<string, string>,
+  status: string | undefined,
+  axes: TaxonomyAxis[],
   lint?: LintConfig,
 ): string {
-  const provided = taxo.domain || taxo.layer || taxo.status;
+  const provided = Object.keys(taxo).length > 0 || !!status;
   const taxoConfigured =
     (lint?.requireTaxonomy?.length ?? 0) > 0 ||
-    (lint?.allowedDomains?.length ?? 0) > 0 ||
-    (lint?.allowedLayers?.length ?? 0) > 0;
+    axes.some((a) => (a.values?.length ?? 0) > 0);
   let front: string;
   if (provided || taxoConfigured) {
     const lines = [`name: ${name}`, `description: ${desc}`];
-    if (taxo.domain) lines.push(`domain: ${taxo.domain}`);
-    if (taxo.layer) lines.push(`layer: ${taxo.layer}`);
-    lines.push(`status: ${taxo.status || "draft"}`);
+    // Declaration order, so the frontmatter reads like the vault's own config.
+    for (const a of axes) if (taxo[a.id]) lines.push(`${a.id}: ${taxo[a.id]}`);
+    lines.push(`status: ${status || "draft"}`);
     front = `---\n${lines.join("\n")}\n---\n`;
   } else {
-    front = `---\nname: ${name}\ndescription: ${desc}\n# Optional taxonomy: powers grouping, filters and colors in the dashboard.\n# Uncomment and use your own vocabulary:\n# domain: my-brand\n# layer: tool\n# status: draft\n# icon: sparkles\n# icon-color: teal-500\n---\n`;
+    const hint = axes.map((a) => `# ${a.id}: my-value`).join("\n");
+    front = `---\nname: ${name}\ndescription: ${desc}\n# Optional taxonomy: powers grouping, filters and colors in the dashboard.\n# Uncomment and use your own vocabulary:\n${hint}\n# status: draft\n# icon: sparkles\n# icon-color: teal-500\n---\n`;
   }
   let body = `\n# ${name}\n`;
   for (const section of lint?.requireSections ?? []) {
@@ -164,7 +203,7 @@ function setFrontmatterField(
 export function setFieldOp(
   vaultDir: string,
   name: string,
-  field: "status" | "domain" | "layer",
+  field: string,
   value: string,
   apply: boolean,
 ): OpOutcome {
@@ -187,13 +226,7 @@ export function setFieldOp(
   return { status: 0, message: `updated ${name}`, actions };
 }
 
-const BULK_STATUSES = new Set([
-  "idea",
-  "draft",
-  "active",
-  "suspended",
-  "deprecated",
-]);
+const BULK_STATUSES = new Set<string>(STATUSES);
 
 // Validate-then-apply a per-name op across a batch, guaranteeing the whole-set-
 // before-mutate invariant: pass 1 dry-runs every member and, if any is invalid,
@@ -269,9 +302,6 @@ export function bulkStatusOp(
       actions: [],
     };
   const targets = names.map((n) => byName.get(n) as Skill);
-  const wantActive = status === "active";
-  const promote = targets.filter((s) => !isActive(s) && wantActive);
-  const demote = targets.filter((s) => isActive(s) && !wantActive);
   // Rewrite every status field, validating the whole set before any write.
   const base = bulkApply(
     names,
@@ -281,38 +311,48 @@ export function bulkStatusOp(
   );
   if (base.status !== 0) return base;
   const actions = [...base.actions];
-  const linkChange = (subset: Skill[], on: boolean) => {
-    if (!subset.length) return;
-    for (const { name: consumer } of resolveConsumers(cfg)) {
-      const { actions: a } = setSkillLinks(
-        subset,
-        cfg,
-        consumer,
-        null,
-        on,
-        apply,
-      );
-      actions.push(...a);
-    }
-  };
-  linkChange(promote, true);
-  linkChange(demote, false);
+  // Reconcile every target against the status it is moving TO, never against
+  // the one it had. Deciding from the old status needs a second copy of the
+  // projection rule, and that copy drifted: it read active-vs-not, so it
+  // unlinked active -> draft (draft is projected) and left draft -> suspended
+  // linked (the old status was not active). Asking the destination also makes
+  // the op idempotent: a link that went missing on its own is put back.
+  const shouldProject = isProjectedStatus(status);
+  for (const { name: consumer } of resolveConsumers(cfg)) {
+    const { actions: a } = setSkillLinks(
+      targets,
+      cfg,
+      consumer,
+      null,
+      shouldProject,
+      apply,
+    );
+    actions.push(...a);
+  }
   return { ...base, actions };
 }
 
-// Bulk domain/layer. Validates the value against the vault's allowlist ONLY
-// when one is declared (mirrors addOp's permissiveness for vaults with no
-// taxonomy rules), then rewrites the field via the shared bulkApply helper
-// (Task 1), which validates every skill's rewrite is possible before writing.
+// Bulk edit of a declared taxonomy axis. Validates `field` against the
+// vault's resolved axes (Task 1) — an axis this vault does not declare is
+// rejected outright — then, when the axis carries an allowlist, validates
+// the value against it (mirrors addOp's permissiveness for axes with no
+// allowlist). Rewrites the field via the shared bulkApply helper (Task 1),
+// which validates every skill's rewrite is possible before writing.
 export function bulkTaxonomyOp(
   vaultDir: string,
   names: string[],
-  field: "domain" | "layer",
+  field: string,
   value: string,
   apply: boolean,
 ): OpOutcome {
-  if (field !== "domain" && field !== "layer")
-    return { status: 2, message: "field must be domain or layer", actions: [] };
+  const cfg = loadConfig(vaultDir);
+  const axis = resolveAxes(cfg).find((a) => a.id === field);
+  if (!axis)
+    return {
+      status: 2,
+      message: `unknown taxonomy axis "${field}"`,
+      actions: [],
+    };
   if (!value)
     return { status: 2, message: `${field} value is required`, actions: [] };
   if (/[\r\n]/.test(value))
@@ -321,13 +361,10 @@ export function bulkTaxonomyOp(
       message: `${field} value must be a single line`,
       actions: [],
     };
-  const cfg = loadConfig(vaultDir);
-  const allowed =
-    field === "domain" ? cfg.lint?.allowedDomains : cfg.lint?.allowedLayers;
-  if (allowed && allowed.length && !allowed.includes(value))
+  if (axis.values?.length && !axis.values.includes(value))
     return {
       status: 2,
-      message: `"${value}" is not an allowed ${field} (${allowed.join(", ")})`,
+      message: `"${value}" is not an allowed ${field} (${axis.values.join(", ")})`,
       actions: [],
     };
   const present = new Set(scanVault(vaultDir, cfg).map((s) => s.name));
@@ -403,99 +440,6 @@ export function bulkRestoreOp(
   );
 }
 
-export interface RenameTransform {
-  op: "add-prefix" | "strip-prefix" | "replace";
-  value?: string; // add-prefix / strip-prefix
-  from?: string; // replace
-  to?: string; // replace
-}
-
-// Bulk rename as a pattern transform (not N free-text renames). Pre-computes
-// every old -> new, validates the WHOLE batch (name syntax + collision against
-// any current vault name and against another new name in the batch), and only
-// then loops migrateOp. A member whose name does not change is skipped.
-export function bulkRenameOp(
-  vaultDir: string,
-  names: string[],
-  transform: RenameTransform,
-  apply: boolean,
-): OpOutcome {
-  const cfg = loadConfig(vaultDir);
-  const present = new Set(scanVault(vaultDir, cfg).map((s) => s.name));
-  const missing = names.filter((n) => !present.has(n));
-  if (missing.length)
-    return {
-      status: 2,
-      message: `not in vault: ${missing.join(", ")}`,
-      actions: [],
-    };
-  const rename = (name: string): string => {
-    if (transform.op === "add-prefix") return `${transform.value ?? ""}${name}`;
-    if (transform.op === "strip-prefix") {
-      const p = transform.value ?? "";
-      return p && name.startsWith(p) ? name.slice(p.length) : name;
-    }
-    const from = transform.from ?? "";
-    return from && name.includes(from)
-      ? name.replace(from, transform.to ?? "")
-      : name;
-  };
-  const pairs = names.map((name) => ({ old: name, next: rename(name) }));
-  // `seen` starts with every current vault name, so a new name colliding with a
-  // skill that is ALSO being renamed is still refused (conservative: avoids
-  // order-dependent partial application inside migrateOp's sequential loop).
-  const seen = new Set<string>(present);
-  const errs: string[] = [];
-  for (const { old, next } of pairs) {
-    if (next === old) continue;
-    if (!NAME_RE.test(next)) errs.push(`"${old}" -> "${next}" (invalid name)`);
-    else if (seen.has(next)) errs.push(`"${old}" -> "${next}" (name taken)`);
-    seen.add(next);
-  }
-  if (errs.length)
-    return {
-      status: 2,
-      message: `rename conflicts: ${errs.join("; ")}`,
-      actions: [],
-    };
-  const changed = pairs.filter((p) => p.next !== p.old);
-  if (!changed.length)
-    return { status: 0, message: "no names changed", actions: [] };
-  // Validate every rename as a dry-run before mutating anything, so a member
-  // migrateOp would refuse (e.g. a stray target dir) aborts the whole batch
-  // with the full offender list and zero writes. bulkApply cannot be reused
-  // here because migrateOp is keyed on (old, new), not a single name.
-  const preErrs = changed
-    .map(({ old, next }) => ({
-      old,
-      next,
-      out: migrateOp(vaultDir, old, next, false),
-    }))
-    .filter((x) => x.out.status !== 0);
-  if (preErrs.length)
-    return {
-      status: 2,
-      message: preErrs
-        .map((x) => `"${x.old}" -> "${x.next}": ${x.out.message}`)
-        .join("; "),
-      actions: [],
-    };
-  const actions: string[] = [];
-  for (const { old, next } of changed) {
-    const out = migrateOp(vaultDir, old, next, apply);
-    if (out.status !== 0)
-      return { status: out.status, message: out.message, actions };
-    actions.push(`rename "${old}" -> "${next}"`, ...out.actions);
-  }
-  return {
-    status: 0,
-    message: apply
-      ? `renamed ${changed.length} skill(s)`
-      : "dry-run — nothing changed",
-    actions,
-  };
-}
-
 export function archiveOp(
   vaultDir: string,
   name: string | undefined,
@@ -521,15 +465,9 @@ export function archiveOp(
   if (existsSync(dest)) {
     return { status: 2, message: `${dest} already exists`, actions: [] };
   }
-  const links = resolveConsumers(cfg)
-    .filter((c) => c.dir !== null)
-    .map((c) => path.join(c.dir as string, name))
-    // Only unlink symlinks that actually resolve to THIS skill; a foreign
-    // same-named link (another vault's skill) must be left alone.
-    .filter((t) => {
-      const st = lstatSync(t, { throwIfNoEntry: false });
-      return st?.isSymbolicLink() && resolveLink(t) === path.resolve(skill.dir);
-    });
+  // Skill links and agent links both: an archived skill that left its agents
+  // linked would keep answering in the runtime after the folder moved away.
+  const links = ownedLinks(cfg, name, skill.dir);
   const actions = [
     `move ${skill.dir} -> ${dest}`,
     ...links.map((l) => `unlink ${l}`),
@@ -609,31 +547,20 @@ export function migrateOp(
     newName,
   );
   if (migrated !== null) writeFileSync(mdPath, migrated);
-  for (const c of resolveConsumers(cfg)) {
-    if (c.dir === null) continue;
-    const oldTarget = path.join(c.dir, oldName);
-    // skill.dir still holds the pre-rename path; only unlink the link that
-    // actually pointed at it, never a foreign same-named symlink.
-    const st = lstatSync(oldTarget, { throwIfNoEntry: false });
-    if (
-      st?.isSymbolicLink() &&
-      resolveLink(oldTarget) === path.resolve(skill.dir)
-    )
-      unlinkSync(oldTarget);
-  }
-  applyPlan(
-    planLinks(
-      [
-        {
-          name: newName,
-          dir: newDir,
-          frontmatterName: newName,
-          status: skill.status,
-        },
-      ],
-      cfg,
-    ),
-  );
+  // skill.dir still holds the pre-rename path, so this only unlinks what
+  // actually pointed at it — never a foreign same-named symlink.
+  for (const l of ownedLinks(cfg, oldName, skill.dir)) unlinkSync(l);
+  const migratedSkill: Skill = {
+    name: newName,
+    dir: newDir,
+    frontmatterName: newName,
+    status: skill.status,
+    agents: scanSkillAgents(newDir),
+  };
+  applyPlan([
+    ...planLinks([migratedSkill], cfg),
+    ...planAgentLinks([migratedSkill], cfg),
+  ]);
   return {
     status: 0,
     message: `migrated "${oldName}" -> "${newName}"`,
@@ -680,8 +607,16 @@ export function restoreOp(
   renameSync(src, dest);
   const status =
     parseFrontmatterField(path.join(dest, "SKILL.md"), "status") ?? "active";
-  applyPlan(
-    planLinks([{ name, dir: dest, frontmatterName: name, status }], cfg),
-  );
+  const restored: Skill = {
+    name,
+    dir: dest,
+    frontmatterName: name,
+    status,
+    agents: scanSkillAgents(dest),
+  };
+  applyPlan([
+    ...planLinks([restored], cfg),
+    ...planAgentLinks([restored], cfg),
+  ]);
   return { status: 0, message: `restored "${name}"`, actions };
 }

@@ -1,0 +1,1254 @@
+<!doctype html>
+<html lang="it" data-scene="0">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>skill-loom · concept animation</title>
+    <style>
+      :root {
+        --shell: oklch(94.2% 0.009 232);
+        --bg: oklch(95.9% 0.007 232);
+        --pane: oklch(98% 0.005 232);
+        --raised: oklch(98% 0.005 232);
+        --panel: oklch(92.6% 0.01 232);
+        --line: oklch(88.4% 0.013 232);
+        --hair: oklch(91.6% 0.011 232);
+        --fg: oklch(26% 0.018 245);
+        --prose: oklch(33% 0.018 245);
+        --dim: oklch(50% 0.02 242);
+        --faint: oklch(55% 0.017 240);
+        --accent: oklch(48.5% 0.115 205);
+        --accent-ink: oklch(42% 0.12 205);
+        --accent-soft: oklch(48.5% 0.115 205 / 0.13);
+        --ok: oklch(46% 0.13 160);
+        --ok-soft: oklch(46% 0.13 160 / 0.14);
+        --warn: oklch(51.5% 0.115 68);
+        --warn-soft: oklch(51.5% 0.115 68 / 0.15);
+        --err: oklch(52% 0.16 25);
+        --ink-on-accent: oklch(99% 0 0);
+        --font: "Figtree", "Avenir Next", Avenir, system-ui, -apple-system,
+          "Segoe UI", sans-serif;
+        --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        --ease: cubic-bezier(0.22, 1, 0.36, 1);
+        --z-chrome: 10;
+        --z-caption: 20;
+        --z-controls: 30;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        display: grid;
+        min-height: 100svh;
+        place-items: center;
+        overflow: hidden;
+        background: oklch(18% 0.014 245);
+        color: var(--fg);
+        font: 15px/1.5 var(--font);
+        letter-spacing: -0.006em;
+      }
+
+      button {
+        color: inherit;
+        font: inherit;
+      }
+
+      .film {
+        position: relative;
+        width: min(100vw, calc(100svh * 0.8));
+        aspect-ratio: 4 / 5;
+        overflow: hidden;
+        background: var(--bg);
+        isolation: isolate;
+      }
+
+      .topbar {
+        position: relative;
+        z-index: var(--z-chrome);
+        display: flex;
+        height: 64px;
+        align-items: center;
+        gap: 14px;
+        padding: 0 24px;
+        border-bottom: 1px solid var(--line);
+        background: var(--pane);
+      }
+
+      .brand {
+        border: 0;
+        padding: 0;
+        background: none;
+        font-size: 18px;
+        font-weight: 750;
+        letter-spacing: -0.025em;
+      }
+
+      .brand-dot {
+        color: var(--accent);
+      }
+
+      .vault {
+        border-radius: 7px;
+        background: var(--panel);
+        color: var(--faint);
+        font: 10.5px/1 var(--mono);
+        padding: 6px 9px;
+      }
+
+      .fresh {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        border-radius: 999px;
+        padding: 5px 9px;
+        background: var(--ok-soft);
+        color: var(--ok);
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .fresh::before {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .nav {
+        display: flex;
+        gap: 2px;
+        margin-left: auto;
+      }
+
+      .nav span {
+        border-radius: 7px;
+        padding: 6px 10px;
+        color: var(--dim);
+        font-size: 12px;
+      }
+
+      .nav .active {
+        background: var(--accent-soft);
+        color: var(--accent-ink);
+        font-weight: 650;
+      }
+
+      .workspace {
+        display: grid;
+        height: calc(100% - 64px);
+        grid-template-columns: 190px minmax(0, 1fr) 252px;
+      }
+
+      .rail,
+      .inspector {
+        background: var(--pane);
+      }
+
+      .rail {
+        border-right: 1px solid var(--line);
+      }
+
+      .inspector {
+        position: relative;
+        border-left: 1px solid var(--line);
+        overflow: hidden;
+      }
+
+      .rail-head,
+      .inspector-head {
+        padding: 18px;
+        border-bottom: 1px solid var(--hair);
+      }
+
+      .rail-head strong,
+      .inspector-head strong {
+        display: block;
+        font-size: 13px;
+      }
+
+      .rail-head span,
+      .inspector-head span {
+        color: var(--faint);
+        font-size: 10.5px;
+      }
+
+      .rail-section {
+        padding: 16px 12px 2px;
+      }
+
+      .rail-label {
+        margin: 0 6px 7px;
+        color: var(--faint);
+        font-size: 9.5px;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+
+      .rail-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 31px;
+        border-radius: 7px;
+        padding: 0 8px;
+        color: var(--dim);
+        font-size: 11.5px;
+      }
+
+      .rail-item.active {
+        background: var(--accent-soft);
+        color: var(--fg);
+        font-weight: 650;
+      }
+
+      .rail-item .count {
+        margin-left: auto;
+        color: var(--faint);
+        font: 10px var(--mono);
+      }
+
+      .swatch {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: var(--swatch, var(--accent));
+      }
+
+      .main {
+        position: relative;
+        min-width: 0;
+        overflow: hidden;
+        background: var(--bg);
+      }
+
+      .toolbar {
+        position: relative;
+        z-index: 4;
+        display: flex;
+        height: 54px;
+        align-items: center;
+        gap: 10px;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--hair);
+        background: var(--shell);
+      }
+
+      .toolbar strong {
+        font-size: 13px;
+      }
+
+      .segmented {
+        display: flex;
+        gap: 2px;
+        margin-left: auto;
+        padding: 3px;
+        border-radius: 8px;
+        background: var(--panel);
+      }
+
+      .segmented span {
+        border-radius: 6px;
+        padding: 5px 9px;
+        color: var(--dim);
+        font-size: 10.5px;
+        font-weight: 600;
+      }
+
+      .segmented .active {
+        background: var(--raised);
+        color: var(--fg);
+        box-shadow: 0 1px 2px oklch(40% 0.03 245 / 0.08);
+      }
+
+      html[data-scene="0"] .segmented .mode-table,
+      html:not([data-scene="0"]) .segmented .mode-map {
+        background: var(--raised);
+        color: var(--fg);
+        box-shadow: 0 1px 2px oklch(40% 0.03 245 / 0.08);
+      }
+
+      .canvas {
+        position: absolute;
+        inset: 54px 0 0;
+        overflow: hidden;
+      }
+
+      .files,
+      .graph {
+        position: absolute;
+        inset: 0;
+        padding: 18px;
+        transition:
+          opacity 480ms var(--ease),
+          transform 650ms var(--ease),
+          filter 480ms var(--ease);
+      }
+
+      .files {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        padding-top: 100px;
+        background: var(--pane);
+      }
+
+      .file-row {
+        display: grid;
+        min-height: 49px;
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        border-bottom: 1px solid var(--hair);
+        padding: 0 7px;
+        transition:
+          opacity 300ms var(--ease),
+          transform 450ms var(--ease);
+      }
+
+      .tile {
+        display: grid;
+        width: 29px;
+        height: 29px;
+        place-items: center;
+        border-radius: 8px;
+        background: color-mix(in oklab, var(--tile) 14%, var(--pane));
+        color: var(--tile);
+        font-size: 10px;
+        font-weight: 750;
+      }
+
+      .file-copy {
+        min-width: 0;
+      }
+
+      .file-copy strong {
+        display: block;
+        overflow: hidden;
+        font-size: 11.5px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .file-copy span {
+        color: var(--faint);
+        font-size: 9.5px;
+      }
+
+      .runtime-mini {
+        display: flex;
+        gap: 4px;
+      }
+
+      .runtime-mini i {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--ok);
+      }
+
+      .graph {
+        opacity: 0;
+        transform: scale(0.975);
+      }
+
+      .graph svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+
+      .field {
+        fill: color-mix(in oklab, var(--panel) 58%, transparent);
+        stroke: var(--hair);
+        stroke-width: 1;
+        transition:
+          opacity 400ms var(--ease),
+          stroke 300ms var(--ease);
+      }
+
+      .field-label {
+        fill: var(--dim);
+        font: 600 12px var(--font);
+      }
+
+      .field-count {
+        fill: var(--faint);
+        font: 10px var(--mono);
+        text-anchor: end;
+      }
+
+      .edge {
+        fill: none;
+        stroke: var(--line);
+        stroke-linecap: round;
+        stroke-width: 1.5;
+        stroke-dasharray: var(--length, 400);
+        stroke-dashoffset: var(--length, 400);
+        transition:
+          stroke-dashoffset 900ms var(--ease),
+          stroke 280ms var(--ease),
+          opacity 280ms var(--ease),
+          stroke-width 280ms var(--ease);
+      }
+
+      .edge.mention {
+        stroke: var(--faint);
+        stroke-dasharray: 4 6;
+        opacity: 0;
+      }
+
+      .node {
+        opacity: 0.42;
+        transform-box: fill-box;
+        transform-origin: center;
+        transition:
+          opacity 320ms var(--ease),
+          transform 420ms var(--ease),
+          filter 320ms var(--ease);
+      }
+
+      .node circle:first-child {
+        fill: color-mix(in oklab, var(--tint) 16%, var(--pane));
+        stroke: var(--tint);
+        stroke-width: 1.5;
+        transition:
+          fill 300ms var(--ease),
+          stroke-width 300ms var(--ease);
+      }
+
+      .node text {
+        fill: var(--faint);
+        font: 9.5px var(--font);
+        text-anchor: middle;
+        transition:
+          fill 250ms var(--ease),
+          font-weight 250ms var(--ease);
+      }
+
+      .dupe {
+        fill: var(--warn);
+        opacity: 0;
+        transform-box: fill-box;
+        transform-origin: center;
+        transition:
+          opacity 220ms var(--ease),
+          transform 350ms var(--ease);
+      }
+
+      .caption {
+        position: absolute;
+        z-index: var(--z-caption);
+        top: 132px;
+        left: 50%;
+        width: min(600px, calc(100% - 80px));
+        transform: translateX(-50%);
+        pointer-events: none;
+        text-align: center;
+      }
+
+      .caption-line {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        transform: translateY(8px);
+        transition:
+          opacity 300ms var(--ease),
+          transform 450ms var(--ease);
+      }
+
+      .caption-line strong {
+        display: block;
+        color: var(--fg);
+        font-size: clamp(21px, 2.3vw, 27px);
+        font-weight: 720;
+        letter-spacing: -0.025em;
+        line-height: 1.15;
+        text-wrap: balance;
+      }
+
+      .caption-line span {
+        display: block;
+        margin-top: 5px;
+        color: var(--dim);
+        font-size: clamp(11px, 1.15vw, 13px);
+        text-wrap: balance;
+      }
+
+      .caption-line[data-caption="4"] strong {
+        color: var(--accent-ink);
+      }
+
+      .inspector-body {
+        position: absolute;
+        inset: 75px 0 0;
+        padding: 17px;
+      }
+
+      .inspect-state {
+        position: absolute;
+        inset: 17px;
+        opacity: 0;
+        transform: translateX(10px);
+        transition:
+          opacity 350ms var(--ease),
+          transform 500ms var(--ease);
+      }
+
+      .inspect-state.active {
+        opacity: 1;
+        transform: none;
+      }
+
+      .metric-list {
+        margin: 0;
+      }
+
+      .metric-list div {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        padding: 9px 0;
+        border-bottom: 1px solid var(--hair);
+      }
+
+      .metric-list dt {
+        color: var(--dim);
+        font-size: 10.5px;
+      }
+
+      .metric-list dd {
+        margin: 0;
+        color: var(--fg);
+        font: 10.5px var(--mono);
+      }
+
+      .finding {
+        margin-top: 16px;
+        border-radius: 10px;
+        padding: 12px;
+        background: var(--warn-soft);
+      }
+
+      .finding strong {
+        display: block;
+        color: var(--warn);
+        font-size: 11px;
+      }
+
+      .finding p,
+      .inspect-copy {
+        margin: 5px 0 0;
+        color: var(--prose);
+        font-size: 10.5px;
+        line-height: 1.5;
+      }
+
+      .skill-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        max-width: 100%;
+        border-radius: 8px;
+        padding: 7px 9px;
+        background: var(--accent-soft);
+        color: var(--accent-ink);
+        font: 10.5px var(--mono);
+      }
+
+      .skill-chip::before {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        content: "";
+      }
+
+      .impact {
+        margin: 14px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .impact li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 32px;
+        border-bottom: 1px solid var(--hair);
+        color: var(--dim);
+        font-size: 10.5px;
+      }
+
+      .impact svg {
+        color: var(--accent);
+      }
+
+      .runtime-stage {
+        position: absolute;
+        z-index: 6;
+        right: 18px;
+        bottom: 20px;
+        left: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        opacity: 0;
+        transform: translateY(14px);
+        transition:
+          opacity 400ms var(--ease),
+          transform 600ms var(--ease);
+      }
+
+      .runtime {
+        display: flex;
+        min-width: 122px;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 9px 12px;
+        background: var(--raised);
+        color: var(--fg);
+        font-size: 10.5px;
+        font-weight: 650;
+        box-shadow: 0 1px 2px oklch(40% 0.03 245 / 0.08);
+      }
+
+      .runtime::before {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--ok);
+        content: "";
+      }
+
+      .runtime-path {
+        width: 20px;
+        height: 1px;
+        overflow: hidden;
+        background: var(--line);
+      }
+
+      .runtime-path::after {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: var(--accent);
+        content: "";
+        transform: translateX(-100%);
+        transition: transform 450ms var(--ease);
+      }
+
+      .controls {
+        position: absolute;
+        z-index: var(--z-controls);
+        right: 18px;
+        bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .progress {
+        position: absolute;
+        z-index: var(--z-controls);
+        right: 0;
+        bottom: 0;
+        left: 0;
+        height: 3px;
+        background: var(--hair);
+      }
+
+      .progress::after {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: var(--accent);
+        content: "";
+        transform: scaleX(var(--progress, 0));
+        transform-origin: left;
+      }
+
+      .control {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--raised);
+        color: var(--dim);
+        cursor: pointer;
+        box-shadow: 0 1px 2px oklch(40% 0.03 245 / 0.08);
+        transition:
+          border-color 150ms,
+          color 150ms,
+          transform 100ms;
+      }
+
+      .control:hover,
+      .control:focus-visible {
+        border-color: var(--accent);
+        color: var(--accent-ink);
+        outline: none;
+      }
+
+      .control:active {
+        transform: scale(0.95);
+      }
+
+      .pause-icon,
+      .play-icon {
+        display: none;
+      }
+
+      .film[data-playing="true"] .pause-icon,
+      .film[data-playing="false"] .play-icon {
+        display: block;
+      }
+
+      html[data-scene="0"] .caption-line[data-caption="0"],
+      html[data-scene="1"] .caption-line[data-caption="1"],
+      html[data-scene="2"] .caption-line[data-caption="2"],
+      html[data-scene="3"] .caption-line[data-caption="3"],
+      html[data-scene="4"] .caption-line[data-caption="4"] {
+        opacity: 1;
+        transform: none;
+      }
+
+      html:not([data-scene="0"]) .files {
+        opacity: 0;
+        transform: translateY(-10px) scale(0.985);
+        filter: blur(3px);
+      }
+
+      html:not([data-scene="0"]) .graph {
+        opacity: 1;
+        transform: none;
+      }
+
+      html[data-scene="1"] .node,
+      html[data-scene="2"] .node,
+      html[data-scene="3"] .node,
+      html[data-scene="4"] .node {
+        opacity: 1;
+      }
+
+      html[data-scene="1"] .dupe,
+      html[data-scene="2"] .dupe,
+      html[data-scene="3"] .dupe,
+      html[data-scene="4"] .dupe {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      html[data-scene="2"] .edge,
+      html[data-scene="3"] .edge,
+      html[data-scene="4"] .edge {
+        stroke-dashoffset: 0;
+      }
+
+      html[data-scene="2"] .edge.mention,
+      html[data-scene="3"] .edge.mention,
+      html[data-scene="4"] .edge.mention {
+        opacity: 0.45;
+      }
+
+      html[data-scene="3"] .edge,
+      html[data-scene="4"] .edge {
+        opacity: 0.12;
+      }
+
+      html[data-scene="3"] .edge.hot,
+      html[data-scene="4"] .edge.hot {
+        opacity: 1;
+        stroke: var(--accent);
+        stroke-width: 2.8;
+      }
+
+      html[data-scene="3"] .node,
+      html[data-scene="4"] .node {
+        opacity: 0.2;
+      }
+
+      html[data-scene="3"] .node.hit,
+      html[data-scene="4"] .node.hit {
+        opacity: 1;
+      }
+
+      html[data-scene="3"] .node.selected,
+      html[data-scene="4"] .node.selected {
+        filter: drop-shadow(0 0 7px oklch(48.5% 0.115 205 / 0.3));
+        transform: scale(1.14);
+      }
+
+      html[data-scene="3"] .node.selected circle:first-child,
+      html[data-scene="4"] .node.selected circle:first-child {
+        fill: color-mix(in oklab, var(--accent) 34%, var(--pane));
+        stroke-width: 2.8;
+      }
+
+      html[data-scene="3"] .node.hit text,
+      html[data-scene="4"] .node.hit text {
+        fill: var(--fg);
+        font-weight: 650;
+      }
+
+      html[data-scene="4"] .runtime-stage {
+        opacity: 1;
+        transform: none;
+      }
+
+      html[data-scene="4"] .runtime-path::after {
+        transform: none;
+      }
+
+      html[data-scene="4"] .field {
+        opacity: 0.5;
+      }
+
+      @media (max-width: 760px) {
+        .film {
+          width: 100vw;
+          height: 100svh;
+          aspect-ratio: auto;
+        }
+
+        .workspace {
+          grid-template-columns: 136px minmax(0, 1fr);
+        }
+
+        .inspector {
+          display: none;
+        }
+
+        .nav span:not(.active),
+        .fresh,
+        .vault {
+          display: none;
+        }
+
+        .caption {
+          top: 132px;
+        }
+
+        .control {
+          width: 44px;
+          height: 44px;
+        }
+
+        .runtime {
+          min-width: 0;
+          padding-inline: 9px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+
+        .controls,
+        .progress {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="film" data-playing="true" aria-label="Animazione concettuale di skill-loom">
+      <header class="topbar">
+        <button class="brand" type="button" aria-label="skill-loom">
+          skill-loom<span class="brand-dot">.</span>
+        </button>
+        <span class="vault">~/skills</span>
+        <span class="fresh">Graph current</span>
+        <nav class="nav" aria-label="Navigazione principale">
+          <span class="active">My skills</span>
+          <span>Status</span>
+          <span>Config</span>
+        </nav>
+      </header>
+
+      <section class="workspace">
+        <aside class="rail" aria-label="Filtri della libreria">
+          <div class="rail-head">
+            <strong>Library</strong>
+            <span>28 active skills</span>
+          </div>
+          <div class="rail-section">
+            <p class="rail-label">View</p>
+            <div class="rail-item active">
+              <span class="swatch"></span>All skills<span class="count">28</span>
+            </div>
+            <div class="rail-item">
+              <span class="swatch" style="--swatch: var(--warn)"></span>Needs review<span class="count">4</span>
+            </div>
+          </div>
+          <div class="rail-section">
+            <p class="rail-label">Domain</p>
+            <div class="rail-item">
+              <span class="swatch" style="--swatch: oklch(55% 0.13 282)"></span>Content<span class="count">8</span>
+            </div>
+            <div class="rail-item">
+              <span class="swatch" style="--swatch: oklch(58% 0.12 34)"></span>Brand<span class="count">6</span>
+            </div>
+            <div class="rail-item">
+              <span class="swatch" style="--swatch: oklch(52% 0.11 205)"></span>System<span class="count">9</span>
+            </div>
+            <div class="rail-item">
+              <span class="swatch" style="--swatch: oklch(55% 0.12 145)"></span>Research<span class="count">5</span>
+            </div>
+          </div>
+          <div class="rail-section">
+            <p class="rail-label">Relations</p>
+            <div class="rail-item">Extracted<span class="count">19</span></div>
+            <div class="rail-item">Mentions<span class="count">7</span></div>
+          </div>
+        </aside>
+
+        <section class="main" aria-label="Mappa delle skill">
+          <div class="toolbar">
+            <strong>My skills</strong>
+            <div class="segmented" aria-label="Modalità di visualizzazione">
+              <span class="mode-table">Table</span><span>Grid</span><span class="mode-map">Map</span>
+            </div>
+          </div>
+
+          <div class="canvas">
+            <div class="files" aria-hidden="true">
+              <div class="file-row">
+                <span class="tile" style="--tile: oklch(55% 0.13 282)">LC</span>
+                <span class="file-copy"><strong>linkedin-content</strong><span>content · authoring</span></span>
+                <span class="runtime-mini"><i></i><i></i><i></i></span>
+              </div>
+              <div class="file-row">
+                <span class="tile" style="--tile: oklch(55% 0.13 282)">CE</span>
+                <span class="file-copy"><strong>copy-editing</strong><span>content · review</span></span>
+                <span class="runtime-mini"><i></i><i></i><i></i></span>
+              </div>
+              <div class="file-row">
+                <span class="tile" style="--tile: oklch(58% 0.12 34)">PB</span>
+                <span class="file-copy"><strong>personal-brand-system</strong><span>brand · system</span></span>
+                <span class="runtime-mini"><i></i><i></i><i></i></span>
+              </div>
+              <div class="file-row">
+                <span class="tile" style="--tile: oklch(52% 0.11 205)">MP</span>
+                <span class="file-copy"><strong>media-production</strong><span>system · production</span></span>
+                <span class="runtime-mini"><i></i><i></i><i></i></span>
+              </div>
+              <div class="file-row">
+                <span class="tile" style="--tile: oklch(55% 0.12 145)">RS</span>
+                <span class="file-copy"><strong>research-synthesis</strong><span>research · synthesis</span></span>
+                <span class="runtime-mini"><i></i><i></i><i></i></span>
+              </div>
+              <div class="file-row">
+                <span class="tile" style="--tile: oklch(52% 0.11 205)">SL</span>
+                <span class="file-copy"><strong>skill-loom</strong><span>system · governance</span></span>
+                <span class="runtime-mini"><i></i><i></i><i></i></span>
+              </div>
+              <div class="file-row">
+                <span class="tile" style="--tile: oklch(58% 0.12 34)">BS</span>
+                <span class="file-copy"><strong>brand-system</strong><span>brand · foundation</span></span>
+                <span class="runtime-mini"><i></i><i></i><i></i></span>
+              </div>
+              <div class="file-row">
+                <span class="tile" style="--tile: oklch(55% 0.13 282)">CW</span>
+                <span class="file-copy"><strong>copywriting</strong><span>content · authoring</span></span>
+                <span class="runtime-mini"><i></i><i></i><i></i></span>
+              </div>
+            </div>
+
+            <div class="graph">
+              <svg viewBox="0 0 610 720" role="img" aria-label="Mappa delle dipendenze tra skill">
+                <g>
+                  <rect class="field" x="18" y="70" width="276" height="268" rx="12" />
+                  <circle cx="34" cy="88" r="3.5" fill="oklch(55% 0.13 282)" />
+                  <text class="field-label" x="44" y="92">Content</text>
+                  <text class="field-count" x="278" y="92">8</text>
+
+                  <rect class="field" x="316" y="70" width="276" height="268" rx="12" />
+                  <circle cx="332" cy="88" r="3.5" fill="oklch(58% 0.12 34)" />
+                  <text class="field-label" x="342" y="92">Brand</text>
+                  <text class="field-count" x="576" y="92">6</text>
+
+                  <rect class="field" x="18" y="356" width="276" height="238" rx="12" />
+                  <circle cx="34" cy="374" r="3.5" fill="oklch(52% 0.11 205)" />
+                  <text class="field-label" x="44" y="378">System</text>
+                  <text class="field-count" x="278" y="378">9</text>
+
+                  <rect class="field" x="316" y="356" width="276" height="238" rx="12" />
+                  <circle cx="332" cy="374" r="3.5" fill="oklch(55% 0.12 145)" />
+                  <text class="field-label" x="342" y="378">Research</text>
+                  <text class="field-count" x="576" y="378">5</text>
+                </g>
+
+                <g aria-hidden="true">
+                  <path class="edge hot" style="--length: 270" d="M94 158 Q176 122 248 196" />
+                  <path class="edge hot" style="--length: 400" d="M94 158 Q296 114 388 171" />
+                  <path class="edge hot" style="--length: 470" d="M94 158 Q282 300 162 436" />
+                  <path class="edge" style="--length: 320" d="M248 196 Q350 282 388 171" />
+                  <path class="edge" style="--length: 360" d="M162 436 Q304 350 456 440" />
+                  <path class="edge" style="--length: 300" d="M212 270 Q312 214 462 250" />
+                  <path class="edge" style="--length: 330" d="M388 171 Q468 262 456 440" />
+                  <path class="edge" style="--length: 250" d="M108 510 Q183 570 246 502" />
+                  <path class="edge" style="--length: 310" d="M462 250 Q516 338 528 505" />
+                  <path class="edge mention" d="M212 270 Q330 520 528 505" />
+                  <path class="edge mention" d="M248 196 Q300 430 246 502" />
+                </g>
+
+                <g class="node hit selected" style="--tint: oklch(55% 0.13 282)">
+                  <circle cx="94" cy="158" r="13" />
+                  <text x="94" y="185">linkedin-content</text>
+                </g>
+                <g class="node hit" style="--tint: oklch(55% 0.13 282)">
+                  <circle cx="248" cy="196" r="11" />
+                  <circle class="dupe" cx="257" cy="187" r="3" />
+                  <text x="248" y="221">copy-editing</text>
+                </g>
+                <g class="node" style="--tint: oklch(55% 0.13 282)">
+                  <circle cx="212" cy="270" r="9" />
+                  <text x="212" y="292">copywriting</text>
+                </g>
+                <g class="node" style="--tint: oklch(55% 0.13 282)">
+                  <circle cx="96" cy="258" r="8" />
+                  <text x="96" y="279">doc-authoring</text>
+                </g>
+
+                <g class="node hit" style="--tint: oklch(58% 0.12 34)">
+                  <circle cx="388" cy="171" r="13" />
+                  <circle class="dupe" cx="398" cy="161" r="3" />
+                  <text x="388" y="198">personal-brand</text>
+                </g>
+                <g class="node" style="--tint: oklch(58% 0.12 34)">
+                  <circle cx="512" cy="158" r="9" />
+                  <text x="512" y="181">brandkit</text>
+                </g>
+                <g class="node" style="--tint: oklch(58% 0.12 34)">
+                  <circle cx="462" cy="250" r="11" />
+                  <text x="462" y="275">brand-system</text>
+                </g>
+
+                <g class="node hit" style="--tint: oklch(52% 0.11 205)">
+                  <circle cx="162" cy="436" r="12" />
+                  <text x="162" y="462">media-production</text>
+                </g>
+                <g class="node" style="--tint: oklch(52% 0.11 205)">
+                  <circle cx="246" cy="502" r="10" />
+                  <text x="246" y="526">skill-loom</text>
+                </g>
+                <g class="node" style="--tint: oklch(52% 0.11 205)">
+                  <circle cx="108" cy="510" r="9" />
+                  <text x="108" y="533">artifact-versioning</text>
+                </g>
+
+                <g class="node" style="--tint: oklch(55% 0.12 145)">
+                  <circle cx="456" cy="440" r="12" />
+                  <text x="456" y="466">research-synthesis</text>
+                </g>
+                <g class="node" style="--tint: oklch(55% 0.12 145)">
+                  <circle cx="528" cy="505" r="9" />
+                  <text x="528" y="528">last30days</text>
+                </g>
+              </svg>
+            </div>
+
+            <div class="runtime-stage" aria-label="Runtime collegati">
+              <span class="runtime">Claude Code</span><span class="runtime-path"></span>
+              <span class="runtime">Codex</span><span class="runtime-path"></span>
+              <span class="runtime">OpenClaw</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="inspector" aria-label="Dettaglio della mappa">
+          <div class="inspector-head">
+            <strong>Map inspector</strong>
+            <span>Knowledge graph</span>
+          </div>
+          <div class="inspector-body">
+            <section class="inspect-state active" data-inspect="summary">
+              <dl class="metric-list">
+                <div><dt>Skills</dt><dd>28</dd></div>
+                <div><dt>Relations</dt><dd>19</dd></div>
+                <div><dt>Mentions</dt><dd>7</dd></div>
+                <div><dt>Cross-domain</dt><dd>6</dd></div>
+              </dl>
+              <div class="finding">
+                <strong>4 overlaps need review</strong>
+                <p>Related instructions are evolving in different parts of the vault.</p>
+              </div>
+            </section>
+
+            <section class="inspect-state" data-inspect="impact">
+              <span class="skill-chip">linkedin-content</span>
+              <p class="inspect-copy">This skill does not change alone. Its rules are read, refined and published across the system.</p>
+              <ul class="impact">
+                <li>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                  copy-editing
+                </li>
+                <li>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                  personal-brand-system
+                </li>
+                <li>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                  media-production
+                </li>
+              </ul>
+              <div class="finding" style="background: var(--accent-soft)">
+                <strong style="color: var(--accent-ink)">Impact visible before the edit</strong>
+                <p>One relationship map shared by the whole harness.</p>
+              </div>
+            </section>
+          </div>
+        </aside>
+      </section>
+
+      <div class="caption" aria-live="polite">
+        <p class="caption-line" data-caption="0">
+          <strong>Tutto sembra in ordine.</strong>
+          <span>Finché guardi una skill alla volta.</span>
+        </p>
+        <p class="caption-line" data-caption="1">
+          <strong>Poi il sistema cresce.</strong>
+          <span>Trigger vicini. Regole duplicate. Contesto che si sposta.</span>
+        </p>
+        <p class="caption-line" data-caption="2">
+          <strong>Skill Loom rende visibili le relazioni.</strong>
+          <span>Non una mappa decorativa. Il sistema che l’agente consulta.</span>
+        </p>
+        <p class="caption-line" data-caption="3">
+          <strong>Cambi una skill. Vedi l’impatto.</strong>
+          <span>Prima di lasciare indietro il resto del sistema.</span>
+        </p>
+        <p class="caption-line" data-caption="4">
+          <strong>Un solo harness. Ogni runtime.</strong>
+          <span>Il tuo modo di lavorare sopravvive al tool che scegli.</span>
+        </p>
+      </div>
+
+      <div class="controls">
+        <button class="control" id="restart" type="button" aria-label="Riavvia animazione" title="Riavvia">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
+        </button>
+        <button class="control" id="toggle" type="button" aria-label="Metti in pausa" title="Pausa / riproduci">
+          <svg class="pause-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14M16 5v14" /></svg>
+          <svg class="play-icon" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="m8 5 11 7-11 7Z" /></svg>
+        </button>
+      </div>
+      <div class="progress" aria-hidden="true"></div>
+    </main>
+
+    <script>
+      (() => {
+        const film = document.querySelector(".film");
+        const root = document.documentElement;
+        const toggle = document.querySelector("#toggle");
+        const restart = document.querySelector("#restart");
+        const summary = document.querySelector('[data-inspect="summary"]');
+        const impact = document.querySelector('[data-inspect="impact"]');
+        const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const forced = Number.parseInt(new URLSearchParams(location.search).get("scene") || "", 10);
+        const duration = 20000;
+        const marks = [0, 3200, 6800, 11100, 15400];
+        let startedAt = performance.now();
+        let elapsed = 0;
+        let playing = !reduced;
+        let frame = 0;
+
+        function sceneAt(time) {
+          let scene = 0;
+          for (let i = 1; i < marks.length; i += 1) {
+            if (time >= marks[i]) scene = i;
+          }
+          return scene;
+        }
+
+        function render(time) {
+          const scene = sceneAt(time);
+          root.dataset.scene = String(scene);
+          film.style.setProperty("--progress", String(Math.min(1, time / duration)));
+          const showImpact = scene >= 3;
+          summary.classList.toggle("active", !showImpact);
+          impact.classList.toggle("active", showImpact);
+        }
+
+        function tick(now) {
+          if (!playing) return;
+          elapsed = now - startedAt;
+          if (elapsed >= duration) {
+            startedAt = now;
+            elapsed = 0;
+          }
+          render(elapsed);
+          frame = requestAnimationFrame(tick);
+        }
+
+        function setPlaying(next) {
+          playing = next;
+          film.dataset.playing = String(playing);
+          toggle.setAttribute("aria-label", playing ? "Metti in pausa" : "Riproduci animazione");
+          cancelAnimationFrame(frame);
+          if (playing) {
+            startedAt = performance.now() - elapsed;
+            frame = requestAnimationFrame(tick);
+          }
+        }
+
+        function reset() {
+          elapsed = 0;
+          startedAt = performance.now();
+          render(0);
+          if (!playing) setPlaying(true);
+        }
+
+        toggle.addEventListener("click", () => setPlaying(!playing));
+        restart.addEventListener("click", reset);
+        document.addEventListener("keydown", (event) => {
+          if (event.code === "Space") {
+            event.preventDefault();
+            setPlaying(!playing);
+          }
+          if (event.key.toLowerCase() === "r") reset();
+        });
+
+        if (Number.isInteger(forced) && forced >= 0 && forced < marks.length) {
+          elapsed = marks[forced] + 100;
+          render(elapsed);
+          film.dataset.playing = "false";
+          document.querySelector(".controls").hidden = true;
+        } else if (reduced) {
+          elapsed = marks[4];
+          render(elapsed);
+          film.dataset.playing = "false";
+        } else {
+          render(0);
+          frame = requestAnimationFrame(tick);
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -275,3 +275,42 @@ test("pullFailureMessage separates a real rebase conflict from other failures (#
   });
   assert.match(other, /^pull failed: fatal: Could not read from remote/);
 });
+
+// --- "0 ahead / 0 behind" must not mean "could not tell" ---------------------
+// With no upstream, rev-list fails and the counters stay at their initial 0.
+// That reads as "in sync" on every surface, and offers nothing to push or pull.
+// A real vault sat 135 ahead and 137 behind for nine days under that reading.
+
+test("syncOp: untracked branch whose remote counterpart exists refuses to guess", () => {
+  const { a } = twoClones();
+  // Same shape as a history rewrite: origin/main is there, tracking is not.
+  git(a, "branch", "--unset-upstream");
+  const res = syncOp(a, false);
+  assert.equal(res.status, 1);
+  assert.match(res.message, /UNKNOWN, not zero/);
+  assert.match(res.message, /set-upstream-to/);
+});
+
+test("syncOp: no upstream and no branch on the remote is bootstrap, not divergence", () => {
+  // The first push establishes tracking; there is nothing to be out of sync
+  // with, so this path must stay open.
+  const bare = path.join(makeTmp(), "remote.git");
+  mkdirSync(bare);
+  git(bare, "init", "-q", "--bare", "-b", "main");
+  const v = path.join(makeTmp(), "fresh");
+  mkdirSync(v);
+  initRepo(v);
+  makeConfig(v, {});
+  makeSkill(v, "cat", "alpha");
+  git(v, "remote", "add", "origin", bare);
+  git(v, "add", "-A");
+  git(v, "commit", "-q", "-m", "baseline", "--no-verify");
+  assert.equal(syncOp(v, true).status, 0);
+});
+
+test("syncStatus reports upstream:false so callers can say unknown", () => {
+  const { a } = twoClones();
+  assert.equal(syncStatus(a).upstream, true);
+  git(a, "branch", "--unset-upstream");
+  assert.equal(syncStatus(a).upstream, false);
+});

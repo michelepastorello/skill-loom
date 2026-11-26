@@ -72,6 +72,40 @@ test("rulesImpact ignores non-active skills (they never block, matching the gate
   assert.ok(!names.includes("sleeping"), "non-active skill must be excluded");
 });
 
+test("rulesImpact merges the posted lint over the on-disk one, matching what apply would save (POST /api/rules merges, not replaces)", () => {
+  const vault = makeTmp();
+  saveConfig(vault, {
+    schema: 1,
+    consumers: {},
+    ignore: [...DEFAULT_IGNORE],
+    names: {},
+    lint: { descriptionMinChars: 3, allowedDomains: ["ok"] },
+  });
+  // Flagged today only by the domain rule (allowedDomains on disk).
+  skill(vault, "bad-domain", {
+    desc: "a properly long and fine description",
+    domain: "nope",
+  });
+
+  // The posted lint (what a dashboard save would send) omits allowedDomains
+  // entirely — a real save merges this over the on-disk lint (server.ts
+  // `cfg.lint = { ...cfg.lint, ...lint }`), so allowedDomains stays ["ok"]
+  // and bad-domain must still be blocked. A preview that evaluates the
+  // posted lint alone (unmerged) loses allowedDomains and would wrongly
+  // report bad-domain as passing.
+  const impact = rulesImpact(vault, { descriptionMinChars: 3 });
+
+  assert.ok(
+    !impact.nowPass.includes("bad-domain"),
+    "a real save keeps allowedDomains, so bad-domain must not be reported as newly passing",
+  );
+  assert.equal(
+    impact.currentFlagged,
+    impact.proposedFlagged,
+    "nothing actually changed once the on-disk allowedDomains is preserved",
+  );
+});
+
 test("collectDoctor blocks a bad active skill but not a bad draft skill", () => {
   const vault = makeTmp();
   saveConfig(vault, {
@@ -130,4 +164,26 @@ test("collectDoctor demotes findings to warnings when lint is not strict (#27)",
     rep.warnings.length > 0,
     "the description finding surfaces as a warning",
   );
+});
+
+test("collectDoctor keeps prose-wall advisory under strict lint", () => {
+  const vault = makeTmp();
+  saveConfig(vault, {
+    schema: 1,
+    consumers: {},
+    ignore: [...DEFAULT_IGNORE],
+    names: {},
+    lint: { strict: true, proseMaxWords: 5 },
+  });
+  const dir = path.join(vault, "verbose");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(dir, "SKILL.md"),
+    "---\nname: verbose\ndescription: trigger\nstatus: active\n---\n\n# verbose\n\nQuesto paragrafo supera deliberatamente la soglia configurata per il test.\n",
+  );
+
+  const rep = collectDoctor(vault);
+
+  assert.ok(!rep.blocking.some((line) => line.includes("prose-wall")));
+  assert.ok(rep.warnings.some((line) => line.includes("prose-wall")));
 });

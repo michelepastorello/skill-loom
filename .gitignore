@@ -8,3 +8,10 @@ demo/demo-vault/
 
 # graphify local analysis artifact
 graphify-out/
+
+# Bundled brand assets: shipped on purpose. Named explicitly so an operator's
+# global excludesFile (which may ignore *.png) can't drop them from the package.
+!src/favicon.ico
+!src/apple-touch-icon.png
+!src/favicon-32.png
+!src/favicon-16.png

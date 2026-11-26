@@ -13,6 +13,7 @@ import {
   expandTilde,
   saveConfig,
   type LoomConfig,
+  type LintConfig,
 } from "../config.js";
 import { ARCHIVE_DIR } from "../vault.js";
 
@@ -50,6 +51,20 @@ function isRepoRoot(vaultDir: string): boolean {
   }
 }
 
+/** What a brand-new vault starts with.
+ *
+ *  Deliberately neutral. skill-loom is a public tool: shipping domains, layers
+ *  or required sections would impose one vault's taxonomy on everyone. What
+ *  ships is the shape plus the floors any vault wants — a description that
+ *  actually describes, a body that is not a wall — and advisory, so a fresh
+ *  vault does not open already failing. The owner tightens from here. */
+export const DEFAULT_LINT: LintConfig = {
+  strict: false,
+  descriptionMinChars: 40,
+  descriptionMaxChars: 400,
+  bodyMaxLines: 200,
+};
+
 export function runInit(vaultDir: string): number {
   if (existsSync(path.join(vaultDir, CONFIG_NAME))) {
     console.error(`${CONFIG_NAME} already exists in ${vaultDir}`);
@@ -64,6 +79,7 @@ export function runInit(vaultDir: string): number {
     consumers,
     ignore: [...DEFAULT_IGNORE],
     names: {},
+    lint: { ...DEFAULT_LINT },
   };
   mkdirSync(path.join(vaultDir, ARCHIVE_DIR), { recursive: true });
 

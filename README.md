@@ -30,17 +30,17 @@ npx skill-loom link --apply  # creates the symlinks
 
 ## Commands
 
-| Command                                                                         | What it does                                                                                                                                                                                          |
-| :------------------------------------------------------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init`                                                                          | Create the vault: `loom.json` + `.archive/`, a `.gitignore`, and `git init` so the vault is its own repo. Detects known runtimes.                                                                     |
-| `add <name> [--domain <d>] [--layer <l>] [--status <s>] [--description <text>]` | Scaffold a flat skill folder with a `SKILL.md`. New skills default to `draft`.                                                                                                                        |
-| `link [--apply]`                                                                | Plan (dry-run) or apply symlinks for every active skill × consumer. Never overwrites anything that is not a symlink.                                                                                  |
-| `status`                                                                        | Matrix of skill × consumer: `linked` / `served` (in-place) / `missing` / `broken` / `foreign`.                                                                                                        |
-| `doctor`                                                                        | Validate names, frontmatter, duplicates, broken and orphan links (exit 1 if problems). Also runs hygiene checks that only warn — unless [`lint.strict`](#linting-optional) promotes them to failures. |
-| `archive <name> [--apply]`                                                      | Move a skill into `.archive/` (hidden from runtimes) and remove its links.                                                                                                                            |
-| `migrate <old> <new> [--apply]`                                                 | Rename a skill everywhere: folder, frontmatter, links.                                                                                                                                                |
-| `ui [--port N] [--host ADDR] [--no-open]`                                       | Local dashboard in your browser: library, status grid, git changes, bulk actions, editable rules. Binds `127.0.0.1`; a non-loopback `--host` needs an explicit opt-in.                                |
-| `sync [--apply]`                                                                | Sync the vault with its git remote: auto-commit, `pull --rebase`, push. Dry-run by default.                                                                                                           |
+| Command                                                                | What it does                                                                                                                                                                                                                            |
+| :--------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init`                                                                 | Create the vault: `loom.json` + `.archive/`, a `.gitignore`, and `git init` so the vault is its own repo. Detects known runtimes.                                                                                                       |
+| `add <name> [--<axis> <value>…] [--status <s>] [--description <text>]` | Scaffold a flat skill folder with a `SKILL.md`. One `--<axis>` flag per axis the vault declares (`--domain`/`--layer` on a vault with no `taxonomy` config); a flag for an undeclared axis fails loudly. New skills default to `draft`. |
+| `link [--apply]`                                                       | Plan (dry-run) or apply symlinks for every active skill × consumer, and remove the vault's own links whose skill is gone. Never touches anything that is not a symlink into this vault.                                                 |
+| `status`                                                               | Matrix of skill × consumer: `linked` / `served` (in-place) / `missing` / `broken` / `foreign`.                                                                                                                                          |
+| `doctor`                                                               | Validate names, frontmatter, duplicates, broken and orphan links (exit 1 if problems). Also runs hygiene checks that only warn — unless [`lint.strict`](#linting-optional) promotes them to failures.                                   |
+| `archive <name> [--apply]`                                             | Move a skill into `.archive/` (hidden from runtimes) and remove its links.                                                                                                                                                              |
+| `migrate <old> <new> [--apply]`                                        | Rename a skill everywhere: folder, frontmatter, links.                                                                                                                                                                                  |
+| `ui [--port N] [--host ADDR] [--no-open]`                              | Local dashboard in your browser: library, status grid, git changes, bulk actions, editable rules. Binds `127.0.0.1`; a non-loopback `--host` needs an explicit opt-in.                                                                  |
+| `sync [--apply]`                                                       | Sync the vault with its git remote: auto-commit, `pull --rebase`, push. Dry-run by default.                                                                                                                                             |
 
 `link`, `archive`, `migrate` and `sync` are **dry-run by default** — nothing changes without `--apply`.
 Exit codes: `0` ok · `1` problems found · `2` usage/config error (CI- and git-hook-friendly).
@@ -55,8 +55,8 @@ my-skills/
 └── .archive/            # archived skills, hidden from every runtime
 ```
 
-The vault is flat: one folder per skill, taxonomy comes from `domain`/`layer`
-frontmatter rather than nested category directories.
+The vault is flat: one folder per skill, taxonomy comes from frontmatter
+rather than nested category directories.
 
 `loom.json`:
 
@@ -68,7 +68,7 @@ frontmatter rather than nested category directories.
     "codex": "~/.codex/skills"
   },
   "ignore": [".git", "node_modules", "__pycache__", ".venv"],
-  "names": { "forpros": "ForPros" }
+  "names": { "acmeai": "AcmeAI" }
 }
 ```
 
@@ -77,6 +77,42 @@ A symlink consumer is just a name and a path — add your own runtimes freely.
 Cursor, opencode, Gemini CLI, Amp, Windsurf, Goose, Mistral Vibe, and the shared
 `~/.agents/skills` pool); the dashboard's Config page offers the rest as
 one-click additions. `names` overrides word casing in titles and labels.
+
+### Taxonomy axes
+
+A vault with no `taxonomy` block gets the unvalidated `domain`/`layer` pair
+skill-loom has always shipped with — nothing below is required to keep
+working exactly as before. To declare your own axes instead, add a top-level
+`taxonomy` block:
+
+```json
+{
+  "taxonomy": {
+    "domain": { "label": "Domain", "values": ["my-brand", "cross"] },
+    "area": { "label": "Area" },
+    "kind": { "label": "Kind", "values": ["tool", "review", "authoring"] }
+  }
+}
+```
+
+Each key is an axis id; `add`'s `--<axis>` flags, frontmatter fields, the
+dashboard's group-by buttons, filter sections and New-skill form fields, and
+`requireTaxonomy` all key off these ids. **The order you declare them in is
+semantic** — it drives column, filter and group-by order in the dashboard —
+and is preserved across saves.
+
+An axis's `values` array is its allowlist; **omitting it (or leaving it
+empty) means the axis exists but is not validated** — never "no value is
+allowed". `area` above accepts anything in frontmatter; `domain` and `kind`
+are checked, and an unrecognized value is flagged (`unknown-<axisId>` in
+`doctor`/CI output, e.g. `unknown-domain`, `unknown-kind`).
+
+A declared `taxonomy` block **replaces** the legacy `lint.allowedDomains` /
+`lint.allowedLayers` shape outright — those keys still work on their own (they
+synthesise a `domain`+`layer` pair), but the moment `taxonomy` is present they
+are ignored, not merged. Keeping both in `loom.json` at once is harmless but
+only the `taxonomy` block has any effect — don't expect `allowedDomains` to
+still constrain anything once `taxonomy` is declared.
 
 ### In-place consumers
 
@@ -90,6 +126,7 @@ path in the runtime's config array, toggled live from the dashboard.
   "consumers": {
     "openclaw": {
       "mode": "in-place",
+      "path": "~/.openclaw/skills",
       "servedVia": {
         "file": "~/.openclaw/loom.json",
         "jsonPath": "skills.load.extraDirs"
@@ -98,6 +135,93 @@ path in the runtime's config array, toggled live from the dashboard.
   }
 }
 ```
+
+`path` is optional on an in-place consumer, and never a link target: being served
+in place says nothing about whether the runtime also keeps a skills folder of its
+own. Declare it and that folder's skills become browsable under **My skills**;
+leave it out and the runtime is served, just not browsable.
+
+### Agents a skill ships
+
+A skill can carry the subagents that belong to it, in an `agents/` folder next
+to `SKILL.md`:
+
+```
+my-skill/
+├── SKILL.md
+└── agents/
+    └── my-worker.md     # frontmatter `name:` is the agent's identity
+```
+
+Runtimes discover agents in a **second root**, separate from skills (Claude
+Code: `~/.claude/agents`). Give a consumer that root with `agentsDir` and
+skill-loom projects the folder too:
+
+```json
+{
+  "consumers": {
+    "claude": {
+      "path": "~/.claude/skills",
+      "agentsDir": "~/.claude/agents"
+    }
+  }
+}
+```
+
+The projection is **one directory link per skill** — `<agentsDir>/<skill>` →
+`<skill>/agents` — not one per agent file. A runtime that scans its agent root
+recursively identifies each definition by its frontmatter `name`, so the folder
+a definition sits in carries no meaning: a skill that adds a second agent needs
+no new link. Skills with no `agents/` folder project nothing, and a consumer
+with no `agentsDir` is never touched — a vault that ships no agents links
+exactly as it did before.
+
+Because that namespace is flat and runtime-wide, `doctor` treats a duplicate
+agent `name` across two skills as **blocking**: the runtime would load whichever
+file it read first and say nothing. An agent file with no `name:` at all is
+blocking for the same reason — nothing can register it.
+
+### A skill one runtime owns for itself
+
+Sometimes a runtime already has a skill by a name your vault also uses, and you
+want to keep both: the runtime's copy where it is, yours everywhere else.
+Without saying so, that folder is a `conflict` — skill-loom refuses to
+overwrite it (it never overwrites anything that is not its own link) and
+`doctor` blocks on it forever.
+
+Say so in **`loom.local.json`**, beside `loom.json`:
+
+```json
+{
+  "projectionOverrides": {
+    "agents": {
+      "copy-editing": "external"
+    }
+  }
+}
+```
+
+Three states per (runtime, skill) pair:
+
+| State      | Meaning                                                                                                              |
+| ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| `managed`  | skill-loom projects the vault there. The default — you never have to write it.                                       |
+| `external` | that runtime's skill by that name is **its own**: never linked, never planned, never a finding. A declared conflict. |
+| `disabled` | the vault owns the name but that runtime must not see it: never linked, and a link left behind is reported as drift. |
+
+An override covers the skill **and the agents it ships** — the two travel
+together, so half-projecting is not an option. It is per pair, so every other
+runtime still gets the vault's copy, and the runtime's own coverage count drops
+the pair rather than sitting at "60 of 61" forever.
+
+`loom.local.json` is deliberately a **second file, not a block in `loom.json`**:
+it describes this machine — which runtime happens to have its own copy of a
+name _here_ — not the nature of the skill. Keep it out of git; the same vault
+cloned elsewhere gets its own answer. An override naming a runtime or a skill
+that does not exist, or an in-place runtime (which reads the whole vault
+through its own config and cannot hold one skill back), is a `doctor` warning:
+an override that matches nothing looks like a problem declared handled while
+the problem is still there.
 
 ## SKILL.md frontmatter
 
@@ -108,13 +232,16 @@ vocabulary, every value gets a stable color automatically:
 | ------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`        | yes      | Must equal the folder name (`doctor` checks it).                                                                                                      |
 | `description` | no       | Shown on cards and in the table; it is also what your agents read to decide when to use the skill.                                                    |
-| `domain`      | no       | Who the skill belongs to (a brand, a project, `cross`). Groups the library and feeds the sidebar filter.                                              |
-| `layer`       | no       | What kind of work it does (e.g. `tool`, `review`, `authoring`). The orthogonal axis: chips, grouping, filter.                                         |
+| `domain`      | no       | Default first taxonomy axis: who the skill belongs to (a brand, a project, `cross`). Groups the library and feeds the sidebar filter.                 |
+| `layer`       | no       | Default second taxonomy axis: what kind of work it does (e.g. `tool`, `review`, `authoring`). Chips, grouping, filter.                                |
 | `status`      | no       | Lifecycle: `idea` / `draft` / `active` / `suspended` / `deprecated`. Absent is treated as `active`; only active skills are linked and strictly gated. |
 | `icon`        | no       | A line-icon name for the skill tile (NotePlan-style).                                                                                                 |
 | `icon-color`  | no       | A Tailwind-ish token (e.g. `teal-500`) overriding the tile hue.                                                                                       |
 
-Skills without `domain`/`layer` land in an "Other" group — everything keeps
+`domain` and `layer` are the two axes skill-loom ships with; declare a
+[`taxonomy`](#taxonomy-axes) block to use different axis ids instead — each
+axis reads its value from a same-named frontmatter field. Skills without a
+value on the group-by axis land in an "Other" group — everything keeps
 working, the taxonomy only adds structure.
 
 ## Linting (optional)
@@ -146,7 +273,17 @@ Every field is opt-in — an absent block leaves only the two built-in warnings.
 With `strict: true`, findings on active skills print in red and `doctor` exits 1;
 non-active skills stay advisory. `requireSections` matches a heading whose text
 starts with the given title (so `## Policy (use / do-not-use)` satisfies
-`"Policy"`).
+`"Policy"`). `requireTaxonomy` lists axis ids that must carry a value on every
+active skill — it is validated against whatever axes are in play (the declared
+`taxonomy` block, or the default `domain`/`layer` pair), so a typo'd id is
+rejected when you save the rule.
+
+`allowedDomains`/`allowedLayers` are the **legacy** way to get a validated
+`domain`+`layer` pair without writing a `taxonomy` block — still fully
+supported on a vault that has no `taxonomy` declared. The moment `taxonomy` is
+present, these two keys are ignored (see [Taxonomy axes](#taxonomy-axes)); a
+vault with neither `taxonomy` nor `allowedDomains`/`allowedLayers` gets the
+unvalidated `domain`+`layer` default, same as before this feature existed.
 
 `descriptionMinChars` flags descriptions shorter than the floor (pair it with
 `descriptionMaxChars` for a range). `forbidBodyPatterns` is a list of regular
@@ -172,14 +309,17 @@ self-contained page, no external dependencies, nothing leaves your machine.
 ![skill-loom dashboard — your skill library, grouped and colour-coded](docs/dashboard-library.png)
 
 - **My skills** — your library as a sortable table (or a card grid, <kbd>g</kbd>
-  toggles), grouped by `domain` or `layer` with per-value colors and chips. The
-  sidebar filters by domain, layer, lifecycle status, link state and git sync
-  state, composing with full-text search. Each row answers the operational
-  questions at a glance: lifecycle, links (`linked` / `partial` / `not linked` /
-  `conflict`) and sync (`synced` / `to commit` / `to push` / `to pull`).
-  **Select many** (checkbox, Cmd-click, Shift-range) and a right-click menu runs
-  bulk actions — set status or taxonomy, archive, restore, pattern-rename — each
-  previewed as a dry-run before it writes.
+  toggles), with one group-by button per declared taxonomy axis (`domain` and
+  `layer` by default), each with per-value colors and chips. The sidebar has
+  one collapsible filter section per axis, plus lifecycle status, link state
+  and git sync state, composing with full-text search. The table's Taxonomy
+  column holds one chip per axis you are not currently grouped on (a single
+  declared axis, grouped on, leaves no room for the column). Each row answers
+  the operational questions at a glance: lifecycle, links (`linked` /
+  `partial` / `not linked` / `conflict`) and sync (`synced` / `to commit` /
+  `to push` / `to pull`). **Select many** (checkbox, Cmd-click, Shift-range)
+  and a right-click menu runs bulk actions — set status or taxonomy, archive,
+  restore, export as a zip — each write previewed as a dry-run first.
 - **Skill page** — a three-pane view: files on the left, the guide rendered as a
   clean document (frontmatter as taxonomy chips and a metadata card; syntax
   highlighting in the source view) in the centre, and runtime toggles + git

@@ -14,7 +14,9 @@ import {
   applyPlan,
   statusMatrix,
   orphanLinks,
+  planOrphanLinks,
   setSkillLinks,
+  setSkillEverywhere,
 } from "../src/linker.js";
 import { scanVault } from "../src/vault.js";
 import { makeTmp, makeSkill, makeConfig } from "./helpers.js";
@@ -55,7 +57,7 @@ test("planLinks: create → apply → ok; conflict on real dir; replace-stale on
   });
 });
 
-test("planLinks links only active skills", () => {
+test("planLinks projects active and draft skills, not idea/suspended/deprecated", () => {
   const vault = makeTmp();
   const consumerDir = path.join(makeTmp(), "skills");
   mkdirSync(consumerDir, { recursive: true });
@@ -69,10 +71,13 @@ test("planLinks links only active skills", () => {
     );
   };
   mk("liveone", "active");
-  mk("draftone", "draft");
+  mk("draftone", "draft"); // review ramp: draft is linked-but-advisory
+  mk("ideaone", "idea");
+  mk("suspendedone", "suspended");
+  mk("deprecatedone", "deprecated");
   const plan = planLinks(scanVault(vault, cfg), cfg);
   const skillsInPlan = [...new Set(plan.map((p) => p.skill))];
-  assert.deepEqual(skillsInPlan.sort(), ["liveone"]);
+  assert.deepEqual(skillsInPlan.sort(), ["draftone", "liveone"]);
 });
 
 test("statusMatrix: linked / missing / broken / foreign", () => {
@@ -108,6 +113,28 @@ test("orphanLinks finds consumer symlinks pointing into vault at removed skills"
   symlinkSync("/somewhere/else", path.join(consumerDir, "unrelated"));
   const orphans = orphanLinks(vault, cfg, scanVault(vault, cfg));
   assert.deepEqual(orphans, [path.join(consumerDir, "ghost")]);
+});
+
+test("planOrphanLinks removes only dead symlinks owned by the vault", () => {
+  const { vault, consumerDir, cfg } = setup();
+  makeSkill(vault, "c", "alive");
+  mkdirSync(consumerDir, { recursive: true });
+  const ghost = path.join(consumerDir, "ghost");
+  const unrelated = path.join(consumerDir, "unrelated");
+  const real = path.join(consumerDir, "real-copy");
+  symlinkSync(path.join(vault, "c", "ghost"), ghost);
+  symlinkSync("/somewhere/else", unrelated);
+  mkdirSync(real);
+
+  const plan = planOrphanLinks(vault, cfg, scanVault(vault, cfg));
+  assert.deepEqual(
+    plan.map((p) => [p.target, p.action]),
+    [[ghost, "remove-orphan"]],
+  );
+  applyPlan(plan);
+  assert.equal(lstatSync(ghost, { throwIfNoEntry: false }), undefined);
+  assert.ok(lstatSync(unrelated).isSymbolicLink());
+  assert.ok(lstatSync(real).isDirectory());
 });
 
 test("setSkillLinks links and unlinks one skill for one consumer", () => {
@@ -208,4 +235,25 @@ test("statusMatrix: in-place consumer with servedVia is 'missing' when the vault
     st.find((s) => s.consumer === "openclaw" && s.skill === "alpha")?.state,
     "missing",
   );
+});
+
+test("setSkillEverywhere links a skill into every symlink consumer at once", () => {
+  const vault = makeTmp();
+  const rtA = path.join(makeTmp(), "a");
+  const rtB = path.join(makeTmp(), "b");
+  const cfg = makeConfig(vault, { claude: rtA, codex: rtB });
+  makeSkill(vault, "cat", "solo");
+  makeSkill(vault, "cat", "other");
+  const skills = scanVault(vault, cfg);
+
+  // dry-run: plans a link per symlink consumer, writes nothing
+  const dry = setSkillEverywhere(skills, cfg, "solo", false);
+  assert.ok(dry.actions.length >= 2);
+  assert.ok(!existsSync(path.join(rtA, "solo")));
+
+  // apply: the named skill is linked into every symlink consumer, and only it
+  setSkillEverywhere(skills, cfg, "solo", true);
+  assert.ok(lstatSync(path.join(rtA, "solo")).isSymbolicLink());
+  assert.ok(lstatSync(path.join(rtB, "solo")).isSymbolicLink());
+  assert.ok(!existsSync(path.join(rtA, "other")));
 });

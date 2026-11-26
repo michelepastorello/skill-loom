@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import {
   scanVault,
   validateVault,
@@ -11,9 +12,13 @@ import {
   parseFirstH1,
   waiverReason,
   isActive,
+  isLinked,
+  isProjectedStatus,
   NAME_RE,
 } from "../src/vault.js";
 import { makeTmp, makeSkill, makeConfig } from "./helpers.js";
+import { collectDoctor } from "../src/gate.js";
+import { loadConfig, saveConfig, type LoomConfig } from "../src/config.js";
 
 test("parseFrontmatterField reads inline, folded (>) and literal (|) scalars", () => {
   const vault = makeTmp();
@@ -76,6 +81,31 @@ test("scanVault reads the lifecycle status, defaulting to active", () => {
   assert.equal(byName.two.status, "active"); // default
   assert.equal(isActive(byName.two), true);
   assert.equal(isActive(byName.one), false);
+});
+
+test("isLinked projects active and draft, but not idea/suspended/deprecated", () => {
+  const mk = (status?: string) =>
+    ({ name: "s", dir: "", status }) as Parameters<typeof isLinked>[0];
+  assert.equal(isLinked(mk("active")), true);
+  assert.equal(isLinked(mk("draft")), true); // review ramp: linked-but-advisory
+  assert.equal(isLinked(mk(undefined)), true); // absent defaults to active
+  assert.equal(isLinked(mk("idea")), false);
+  assert.equal(isLinked(mk("suspended")), false);
+  assert.equal(isLinked(mk("deprecated")), false);
+  // isActive stays strict: only active (draft is advisory to the gate)
+  assert.equal(isActive(mk("draft")), false);
+});
+
+// The same rule, reachable from a bare status string: an op that is about to
+// WRITE a status has no Skill to ask yet, and copying the boundary by hand is
+// how it drifted from isLinked in the first place.
+test("isProjectedStatus answers the projection rule for a bare status", () => {
+  assert.equal(isProjectedStatus("active"), true);
+  assert.equal(isProjectedStatus("draft"), true);
+  assert.equal(isProjectedStatus(undefined), true); // absent defaults to active
+  assert.equal(isProjectedStatus("idea"), false);
+  assert.equal(isProjectedStatus("suspended"), false);
+  assert.equal(isProjectedStatus("deprecated"), false);
 });
 
 test("validateVault flags invalid name, frontmatter mismatch, duplicates", () => {
@@ -161,6 +191,46 @@ test("skillWarnings runs config-driven lint checks when a lint block is set", ()
     "missing-taxonomy",
     "unknown-layer",
   ]);
+});
+
+test("skillWarnings: declared axes produce unknown-<axis> findings", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "loom-test-"));
+  mkdirSync(path.join(dir, "alpha"), { recursive: true });
+  writeFileSync(
+    path.join(dir, "alpha", "SKILL.md"),
+    "---\nname: alpha\ndescription: a description long enough\ndomain: cross\narea: bogus\nkind: framework\n---\n\n# alpha\n\nbody\n",
+  );
+  const cfg = {
+    ignore: [],
+    taxonomy: {
+      domain: { values: ["cross"] },
+      area: { values: ["governance-quality"] },
+      kind: { values: ["framework"] },
+    },
+  } as unknown as LoomConfig;
+  const kinds = skillWarnings(scanVault(dir, cfg), cfg).map((w) => w.kind);
+  assert.ok(kinds.includes("unknown-area"));
+  assert.ok(!kinds.includes("unknown-domain"));
+  assert.ok(!kinds.includes("unknown-kind"));
+});
+
+test("skillWarnings: legacy config still emits unknown-layer (regression)", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "loom-test-"));
+  mkdirSync(path.join(dir, "alpha"), { recursive: true });
+  writeFileSync(
+    path.join(dir, "alpha", "SKILL.md"),
+    "---\nname: alpha\ndescription: a description long enough\ndomain: bogus\nlayer: bogus\n---\n\n# alpha\n\nbody\n",
+  );
+  const cfg = {
+    ignore: [],
+    lint: {
+      allowedDomains: ["cross", "product"],
+      allowedLayers: ["tool", "engine"],
+    },
+  } as unknown as LoomConfig;
+  const kinds = skillWarnings(scanVault(dir, cfg), cfg).map((w) => w.kind);
+  assert.ok(kinds.includes("unknown-domain"));
+  assert.ok(kinds.includes("unknown-layer"));
 });
 
 test("skillWarnings with no lint block only runs the built-in hygiene checks", () => {
@@ -343,4 +413,211 @@ test("skillWarnings treats an empty allowlist as no restriction, not flag-all", 
   const kinds = skillWarnings(scanVault(vault, cfg), cfg).map((w) => w.kind);
   assert.ok(!kinds.includes("unknown-domain"));
   assert.ok(!kinds.includes("unknown-layer"));
+});
+
+test("absolute-path is found in a reference, not only in SKILL.md", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const d = makeSkill(vault, "a", "s");
+  mkdirSync(path.join(d, "references"), { recursive: true });
+  writeFileSync(
+    path.join(d, "references", "guide.md"),
+    "# Guide\n\nRun /home/someone/tool.py to sync.\n",
+  );
+  // no lint configured: absolute-path is always-on and must stay that way
+  const w = skillWarnings(scanVault(vault, base), base);
+  const hit = w.find((x) => x.kind === "absolute-path");
+  // the finding must say WHICH file, or nobody can act on it
+  assert.equal(hit?.file, "references/guide.md");
+});
+
+test("a skill-level check does not fire on a reference", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const d = makeSkill(vault, "a", "s");
+  mkdirSync(path.join(d, "references"), { recursive: true });
+  // no frontmatter, no canonical H1: normal for a reference, and it must not
+  // be judged as if it were the skill's own front page
+  writeFileSync(
+    path.join(d, "references", "notes.md"),
+    "# Whatever\n\nprose\n",
+  );
+  const w = skillWarnings(scanVault(vault, base), base);
+  assert.ok(!w.some((x) => x.kind === "h1-mismatch"));
+});
+
+test("absolutePathIgnoreFiles skips a file whose whole job is holding paths", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const d = makeSkill(vault, "a", "s");
+  // a live-state map is a table of where the data lives: paths are its content
+  writeFileSync(
+    path.join(d, "live-state.md"),
+    "# x\n\n| /home/someone/db.sqlite |\n",
+  );
+  mkdirSync(path.join(d, "references"), { recursive: true });
+  writeFileSync(
+    path.join(d, "references", "guide.md"),
+    "# Guide\n\n/home/someone/tool.py\n",
+  );
+  const cfg = { ...base, lint: { absolutePathIgnoreFiles: ["live-state.md"] } };
+  const w = skillWarnings(scanVault(vault, cfg), cfg);
+  const hits = w.filter((x) => x.kind === "absolute-path");
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].file, "references/guide.md");
+});
+
+test("prose-wall flags a long unbroken paragraph", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const d = makeSkill(vault, "a", "s");
+  const wall = Array.from({ length: 90 }, () => "word").join(" ") + ".";
+  writeFileSync(
+    path.join(d, "SKILL.md"),
+    `---\nname: s\ndescription: d\n---\n\n# s\n\n**Label.** ${wall}\n`,
+  );
+  const cfg = { ...base, lint: { proseMaxWords: 75 } };
+  const w = skillWarnings(scanVault(vault, cfg), cfg);
+  assert.ok(w.some((x) => x.kind === "prose-wall"));
+});
+
+test("prose-wall does not flag structure — bullets and tables are not a wall", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const d = makeSkill(vault, "a", "s");
+  const bullets = Array.from(
+    { length: 40 },
+    (_, i) => `- **X${i}** short why.`,
+  ).join("\n");
+  writeFileSync(
+    path.join(d, "SKILL.md"),
+    `---\nname: s\ndescription: d\n---\n\n# s\n\n${bullets}\n\n| a | b |\n| - | - |\n`,
+  );
+  const cfg = { ...base, lint: { proseMaxWords: 75 } };
+  const w = skillWarnings(scanVault(vault, cfg), cfg);
+  assert.ok(!w.some((x) => x.kind === "prose-wall"));
+});
+
+test("prose-wall ignores the frontmatter — a long description is not a wall", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const d = makeSkill(vault, "a", "s");
+  const longDesc = Array.from({ length: 90 }, () => "word").join(" ");
+  writeFileSync(
+    path.join(d, "SKILL.md"),
+    `---\nname: s\ndescription: ${longDesc}\n---\n\n# s\n\nshort body.\n`,
+  );
+  const cfg = { ...base, lint: { proseMaxWords: 75 } };
+  const w = skillWarnings(scanVault(vault, cfg), cfg);
+  assert.ok(!w.some((x) => x.kind === "prose-wall"));
+});
+
+test("prose-wall is off when the vault sets no threshold", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const d = makeSkill(vault, "a", "s");
+  const wall = Array.from({ length: 200 }, () => "word").join(" ") + ".";
+  writeFileSync(
+    path.join(d, "SKILL.md"),
+    `---\nname: s\ndescription: d\n---\n\n# s\n\n${wall}\n`,
+  );
+  // no proseMaxWords: the engine must not invent a house style
+  const w = skillWarnings(scanVault(vault, base), base);
+  assert.ok(!w.some((x) => x.kind === "prose-wall"));
+});
+
+const STRUCTURED = {
+  file: "live-state.md",
+  h1Prefix: "# Live-state — ",
+  requireTable: true,
+};
+
+test("structured-doc flags a legacy H1", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const d = makeSkill(vault, "a", "s");
+  writeFileSync(
+    path.join(d, "live-state.md"),
+    "# Live-data map — foo\n\n| C | D |\n| - | - |\n| a | b |\n",
+  );
+  const cfg = { ...base, lint: { structuredDocs: [STRUCTURED] } };
+  const w = skillWarnings(scanVault(vault, cfg), cfg);
+  assert.ok(w.some((x) => x.kind === "structured-doc" && /H1/.test(x.detail)));
+});
+
+test("structured-doc flags a missing table", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const d = makeSkill(vault, "a", "s");
+  writeFileSync(
+    path.join(d, "live-state.md"),
+    "# Live-state — foo\n\njust prose.\n",
+  );
+  const cfg = { ...base, lint: { structuredDocs: [STRUCTURED] } };
+  const w = skillWarnings(scanVault(vault, cfg), cfg);
+  assert.ok(
+    w.some((x) => x.kind === "structured-doc" && /table/.test(x.detail)),
+  );
+});
+
+test("structured-doc passes a well-formed doc", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  const d = makeSkill(vault, "a", "s");
+  writeFileSync(
+    path.join(d, "live-state.md"),
+    "# Live-state — foo\n\n| C | D |\n| - | - |\n| a | b |\n",
+  );
+  const cfg = { ...base, lint: { structuredDocs: [STRUCTURED] } };
+  const w = skillWarnings(scanVault(vault, cfg), cfg);
+  assert.ok(!w.some((x) => x.kind === "structured-doc"));
+});
+
+test("structured-doc says nothing about a skill that has no such doc", () => {
+  const vault = makeTmp();
+  const base = makeConfig(vault, {});
+  makeSkill(vault, "a", "s");
+  const cfg = { ...base, lint: { structuredDocs: [STRUCTURED] } };
+  const w = skillWarnings(scanVault(vault, cfg), cfg);
+  // the doc is optional: declaring its shape must not make it mandatory
+  assert.ok(!w.some((x) => x.kind === "structured-doc"));
+});
+
+test("a broken structured doc BLOCKS on an active skill and only warns on a draft", () => {
+  const vault = makeTmp();
+  makeConfig(vault, {});
+  // the whole point of accepting the draft downgrade: quality is enforced at
+  // promotion. If this ever goes green, the ratchet has become an amnesty.
+  for (const [name, status] of [
+    ["act", "active"],
+    ["drf", "draft"],
+  ]) {
+    const d = makeSkill(vault, "a", name);
+    writeFileSync(
+      path.join(d, "SKILL.md"),
+      `---\nname: ${name}\ndescription: d\nstatus: ${status}\n---\n\n# ${name}\n`,
+    );
+    writeFileSync(path.join(d, "live-state.md"), "# Wrong — x\n\nno table.\n");
+  }
+  const cfg = loadConfig(vault);
+  saveConfig(vault, {
+    ...cfg,
+    lint: { strict: true, structuredDocs: [STRUCTURED] },
+  });
+  const r = collectDoctor(vault);
+  // Match the quoted name: a bare "act" also lives inside the word "active",
+  // so a future finding that renders a status word would satisfy this by
+  // accident — and a ratchet that passes by accident is not a ratchet.
+  assert.ok(
+    r.blocking.some((l) => l.includes('"act"')),
+    "an active skill's broken live-state must block",
+  );
+  assert.ok(
+    !r.blocking.some((l) => l.includes('"drf"')),
+    "a draft's must not block — it is work in progress",
+  );
+  assert.ok(
+    r.warnings.some((l) => l.includes('"drf"')),
+    "but the draft must still be told about it, not silently forgiven",
+  );
 });
