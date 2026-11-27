@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Deploy skill-loom to the VPS checkout (~/.openclaw/apps/skill-loom).
+# Deploy skill-loom to the VPS checkout (/srv/tools/skill-loom).
 # The VPS `skill-loom` binary is an npm link to that checkout's dist/, so a deploy is:
 # fast-forward to origin/main, npm ci if the lockfile changed, build, restart the UI.
 # Fast-forward only: stops instead of discarding work committed or edited on the VPS.
 # Publishing to npm is a separate, manual release step.
 set -euo pipefail
 HOST="${DEPLOY_HOST:-openclaw}"
-TARGET="${DEPLOY_PATH:-.openclaw/apps/skill-loom}"
+TARGET="${DEPLOY_PATH:-/srv/tools/skill-loom}"
 
 ssh "$HOST" bash -s <<REMOTE
 set -euo pipefail
